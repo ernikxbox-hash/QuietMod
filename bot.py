@@ -82,6 +82,16 @@ business_afk_last_reply: dict[tuple[str, int], float] = {}
 
 business_code_mode: set[str] = set()
 
+business_wbl_chats: set[tuple[str, int]] = set()
+
+PROFANITY_RE = re.compile(
+    r"(?iu)\b("
+    r"хуй|хуе|хуя|хуи|хуё|хуё|хуйн|хер|херн|пизд|пезд|пезд|бля|бляд|еба|ёба|ебл|"
+    r"заеб|заёб|выеб|выёб|сука|сучк|мраз|гандон|пидор|пидр|педик|нахуй|оху|аху|"
+    r"fuck|shit|bitch|cunt"
+    r")\w*\b"
+)
+
 # Последнее уведомление (deleted/edited) на owner_id
 # owner_id → message_id уведомления, которое нужно удалить при следующем уведомлении
 last_notify_msg: dict[int, int] = {}
@@ -130,6 +140,12 @@ def _fmt_duration_ru(seconds: int) -> str:
         return f"{hours} ч."
     days = hours // 24
     return f"{days} дн."
+
+
+def _contains_profanity(text: str) -> bool:
+    if not text:
+        return False
+    return bool(PROFANITY_RE.search(text))
 
 
 MEDIA_MAP = {
@@ -1206,6 +1222,42 @@ async def on_uncode_inline(msg: Message):
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Code выключен")
 
 
+@dp.business_message(F.text.regexp(r"(?i)^\.wbl$"))
+async def on_wbl_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.wbl): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_wbl_chats.add((msg.business_connection_id, msg.chat.id))
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Фильтр мата включён")
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.unwbl$"))
+async def on_unwbl_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.unwbl): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_wbl_chats.discard((msg.business_connection_id, msg.chat.id))
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Фильтр мата выключен")
+
+
 @dp.business_message(F.text.regexp(r"(?i)^\.ai\s+.+"))
 async def on_ai_inline(msg: Message):
     """
@@ -1515,7 +1567,7 @@ async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
 
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl")):
         return
 
     try:
