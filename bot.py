@@ -9,7 +9,7 @@ import logging
 import os
 import re
 import signal
-from datetime import date, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 import aiohttp
@@ -77,6 +77,9 @@ business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
 
 business_muted_chats: set[tuple[str, int]] = set()
 
+business_afk: dict[str, dict] = {}
+business_afk_last_reply: dict[tuple[str, int], float] = {}
+
 # Последнее уведомление (deleted/edited) на owner_id
 # owner_id → message_id уведомления, которое нужно удалить при следующем уведомлении
 last_notify_msg: dict[int, int] = {}
@@ -112,6 +115,19 @@ def fmt_msg_date(dt) -> str:
 
 def ref_link(uid: int) -> str:
     return f"https://t.me/{BOT_USERNAME}?start=ref_{uid}"
+
+
+def _fmt_duration_ru(seconds: int) -> str:
+    if seconds < 60:
+        return f"{seconds} сек."
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} мин."
+    hours = minutes // 60
+    if hours < 24:
+        return f"{hours} ч."
+    days = hours // 24
+    return f"{days} дн."
 
 
 MEDIA_MAP = {
@@ -1114,6 +1130,48 @@ async def on_unmute_inline(msg: Message):
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Mute выключен")
 
 
+@dp.business_message(F.text.regexp(r"(?i)^\.afk(\s+.*)?$"))
+async def on_afk_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.afk): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+
+    raw_text = (msg.text or msg.caption or "").strip()
+    note = raw_text[4:].strip() if len(raw_text) >= 4 else ""
+    business_afk[msg.business_connection_id] = {
+        "owner_id": owner_id,
+        "started_at": datetime.now(timezone.utc),
+        "note": note,
+    }
+    business_afk_last_reply.clear()
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ AFK включён")
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.unafk$"))
+async def on_unafk_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.unafk): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+
+    business_afk.pop(msg.business_connection_id, None)
+    business_afk_last_reply.clear()
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ AFK выключен")
+
+
 @dp.business_message(F.text.regexp(r"(?i)^\.ai\s+.+"))
 async def on_ai_inline(msg: Message):
     """
@@ -1423,7 +1481,7 @@ async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
 
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk")):
         return
 
     try:
@@ -1444,6 +1502,35 @@ async def on_business_msg(msg: Message):
             await asyncio.sleep(int(retry_after))
             await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         return
+
+    afk = business_afk.get(msg.business_connection_id)
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
+        and afk
+        and afk.get("owner_id") == owner_id
+    ):
+        now_mono = asyncio.get_running_loop().time()
+        last = business_afk_last_reply.get((msg.business_connection_id, msg.chat.id), 0.0)
+        if now_mono - last >= 45:
+            started_at = afk.get("started_at")
+            elapsed = int((datetime.now(timezone.utc) - started_at).total_seconds()) if started_at else 0
+            parts = [
+                "Я сейчас не в сети.",
+                f"Прошло: {_fmt_duration_ru(max(0, elapsed))}",
+            ]
+            note = (afk.get("note") or "").strip()
+            if note:
+                parts.append(note)
+            parts.append("AFK 45с")
+            reply_text = "\n".join(parts)
+            ok, retry_after, _ = await _business_send_message_ex(msg.business_connection_id, msg.chat.id, reply_text)
+            if not ok and retry_after:
+                await asyncio.sleep(int(retry_after))
+                ok, _, _ = await _business_send_message_ex(msg.business_connection_id, msg.chat.id, reply_text)
+            if ok:
+                business_afk_last_reply[(msg.business_connection_id, msg.chat.id)] = now_mono
 
     media_type = "◆ Текст"
     file_id: Optional[str] = None
