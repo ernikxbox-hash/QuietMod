@@ -75,6 +75,8 @@ spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
 business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
 
+business_muted_chats: set[tuple[str, int]] = set()
+
 # Последнее уведомление (deleted/edited) на owner_id
 # owner_id → message_id уведомления, которое нужно удалить при следующем уведомлении
 last_notify_msg: dict[int, int] = {}
@@ -979,6 +981,29 @@ async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tu
         return False, None, str(e)
 
 
+async def _business_delete_message_ex(conn_id: str, chat_id: int, msg_id: int) -> tuple[bool, Optional[int], Optional[str]]:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
+    payload = {
+        "business_connection_id": conn_id,
+        "chat_id": chat_id,
+        "message_id": msg_id,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    params = data.get("parameters") or {}
+                    retry_after = params.get("retry_after")
+                    description = data.get("description")
+                    log.warning(f"deleteMessage API error: {description}")
+                    return False, retry_after, description
+                return True, None, None
+    except Exception as e:
+        log.warning(f"deleteMessage HTTP: {e}")
+        return False, None, str(e)
+
+
 async def _business_spam_worker(conn_id: str, chat_id: int, owner_id: int, text: str, count: int):
     key = (conn_id, chat_id, owner_id)
     try:
@@ -1052,6 +1077,42 @@ async def on_spam_inline(msg: Message):
         _business_spam_worker(msg.business_connection_id, msg.chat.id, owner_id, text_part, count)
     )
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, f"◇ Запустил спам: {count}")
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.mute$"))
+async def on_mute_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.mute): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_muted_chats.add((msg.business_connection_id, msg.chat.id))
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Mute включён")
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.unmute$"))
+async def on_unmute_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.unmute): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_muted_chats.discard((msg.business_connection_id, msg.chat.id))
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Mute выключен")
 
 
 @dp.business_message(F.text.regexp(r"(?i)^\.ai\s+.+"))
@@ -1363,8 +1424,7 @@ async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
 
-    # Не кэшируем .ai/.search/.spam команды — они будут отредактированы/обработаны отдельно
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute")):
         return
 
     try:
@@ -1372,6 +1432,18 @@ async def on_business_msg(msg: Message):
         owner_id = conn.user.id
     except Exception as e:
         log.error(f"get_business_connection (save): {e}")
+        return
+
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
+        and (msg.business_connection_id, msg.chat.id) in business_muted_chats
+    ):
+        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.chat.id, msg.message_id)
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            await _business_delete_message_ex(msg.business_connection_id, msg.chat.id, msg.message_id)
         return
 
     media_type = "◆ Текст"
