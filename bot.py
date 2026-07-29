@@ -17,6 +17,7 @@ from ddgs import DDGS
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -69,6 +70,8 @@ dp  = Dispatcher(storage=MemoryStorage())
 
 # in-memory кэш истории ИИ
 ai_history: dict[int, list] = {}
+
+spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
 # Последнее уведомление (deleted/edited) на owner_id
 # owner_id → message_id уведомления, которое нужно удалить при следующем уведомлении
@@ -1182,9 +1185,73 @@ async def on_search_group(msg: Message):
 
 
 
+async def _spam_worker(chat_id: int, uid: int, text: str, count: int):
+    key = (chat_id, uid)
+    try:
+        for _ in range(count):
+            try:
+                await bot.send_message(chat_id, text, parse_mode=None)
+            except TelegramRetryAfter as e:
+                await asyncio.sleep(e.retry_after)
+                await bot.send_message(chat_id, text, parse_mode=None)
+            await asyncio.sleep(0.05)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        log.error(f"spam worker: {e}")
+    finally:
+        spam_tasks.pop(key, None)
+
+
+@dp.message(F.text.regexp(r"(?i)^\.spam(\s+.+)?$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
+async def on_spam(msg: Message):
+    if not msg.from_user:
+        return
+
+    uid = msg.from_user.id
+    raw_text = (msg.text or msg.caption or "").strip()
+    body = raw_text[5:].strip() if len(raw_text) >= 5 else ""
+    key = (msg.chat.id, uid)
+
+    if body.lower() == "stop":
+        task = spam_tasks.get(key)
+        if task and not task.done():
+            task.cancel()
+            await msg.answer("◇ Спам остановлен", parse_mode=None)
+        else:
+            spam_tasks.pop(key, None)
+            await msg.answer("◇ Спам не запущен", parse_mode=None)
+        return
+
+    if not body or " " not in body:
+        await msg.answer("◇ Формат: .spam текст 10  |  .spam stop", parse_mode=None)
+        return
+
+    text_part, count_part = body.rsplit(" ", 1)
+    try:
+        count = int(count_part)
+    except Exception:
+        await msg.answer("◇ Количество должно быть числом: .spam текст 10", parse_mode=None)
+        return
+
+    if count <= 0:
+        await msg.answer("◇ Количество должно быть > 0", parse_mode=None)
+        return
+
+    existing = spam_tasks.get(key)
+    if existing and not existing.done():
+        await msg.answer("◇ Спам уже идёт. Остановить: .spam stop", parse_mode=None)
+        return
+
+    spam_tasks[key] = asyncio.create_task(_spam_worker(msg.chat.id, uid, text_part, count))
+    await msg.answer(f"◇ Запустил спам: {count}", parse_mode=None)
+
+
 
 # ══════════════════════════════════════════════════════
 #  КЭШИРОВАНИЕ БИЗНЕС-СООБЩЕНИЙ
+#  FIX: owner_id = business_connection_id → user.id
+# ══════════════════════════════════════════════════════
 #  FIX: owner_id = business_connection_id → user.id
 # ══════════════════════════════════════════════════════
 @dp.business_message()
@@ -1196,8 +1263,8 @@ async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
 
-    # Не кэшируем .ai и .search команды — они будут отредактированы
-    if msg.text and (msg.text.lower().startswith(".ai ") or msg.text.lower().startswith(".search ")):
+    # Не кэшируем .ai/.search/.spam команды — они будут отредактированы/обработаны отдельно
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ")):
         return
 
     try:
