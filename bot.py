@@ -1523,7 +1523,6 @@ async def on_business_msg(msg: Message):
             note = (afk.get("note") or "").strip()
             if note:
                 parts.append(note)
-            parts.append("AFK 45с")
             reply_text = "\n".join(parts)
             ok, retry_after, _ = await _business_send_message_ex(msg.business_connection_id, msg.chat.id, reply_text)
             if not ok and retry_after:
