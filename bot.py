@@ -73,6 +73,8 @@ ai_history: dict[int, list] = {}
 
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 
+business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
+
 # Последнее уведомление (deleted/edited) на owner_id
 # owner_id → message_id уведомления, которое нужно удалить при следующем уведомлении
 last_notify_msg: dict[int, int] = {}
@@ -952,6 +954,104 @@ async def _business_edit_message(conn_id: str, chat_id: int, msg_id: int, text: 
     """Обёртка над _business_edit_message_ex для мест, где описание ошибки не нужно."""
     ok, _ = await _business_edit_message_ex(conn_id, chat_id, msg_id, text)
     return ok
+
+
+async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tuple[bool, Optional[int], Optional[str]]:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "business_connection_id": conn_id,
+        "chat_id": chat_id,
+        "text": text,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    params = data.get("parameters") or {}
+                    retry_after = params.get("retry_after")
+                    description = data.get("description")
+                    log.warning(f"sendMessage API error: {description}")
+                    return False, retry_after, description
+                return True, None, None
+    except Exception as e:
+        log.warning(f"sendMessage HTTP: {e}")
+        return False, None, str(e)
+
+
+async def _business_spam_worker(conn_id: str, chat_id: int, owner_id: int, text: str, count: int):
+    key = (conn_id, chat_id, owner_id)
+    try:
+        for _ in range(count):
+            ok, retry_after, _ = await _business_send_message_ex(conn_id, chat_id, text)
+            if not ok:
+                if retry_after:
+                    await asyncio.sleep(int(retry_after))
+                    continue
+                await asyncio.sleep(1)
+                continue
+            await asyncio.sleep(0.05)
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        log.error(f"business spam worker: {e}")
+    finally:
+        business_spam_tasks.pop(key, None)
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.spam(\s+.+)?$"))
+async def on_spam_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.spam): {e}")
+        return
+
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+
+    raw_text = (msg.text or msg.caption or "").strip()
+    body = raw_text[5:].strip() if len(raw_text) >= 5 else ""
+    key = (msg.business_connection_id, msg.chat.id, owner_id)
+
+    if body.lower() == "stop":
+        task = business_spam_tasks.get(key)
+        if task and not task.done():
+            task.cancel()
+            await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Спам остановлен")
+        else:
+            business_spam_tasks.pop(key, None)
+            await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Спам не запущен")
+        return
+
+    if not body or " " not in body:
+        await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Формат: .spam текст 10  |  .spam stop")
+        return
+
+    text_part, count_part = body.rsplit(" ", 1)
+    try:
+        count = int(count_part)
+    except Exception:
+        await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Количество должно быть числом: .spam текст 10")
+        return
+
+    if count <= 0:
+        await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Количество должно быть > 0")
+        return
+
+    existing = business_spam_tasks.get(key)
+    if existing and not existing.done():
+        await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Спам уже идёт. Остановить: .spam stop")
+        return
+
+    business_spam_tasks[key] = asyncio.create_task(
+        _business_spam_worker(msg.business_connection_id, msg.chat.id, owner_id, text_part, count)
+    )
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, f"◇ Запустил спам: {count}")
 
 
 @dp.business_message(F.text.regexp(r"(?i)^\.ai\s+.+"))
