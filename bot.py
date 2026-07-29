@@ -981,12 +981,11 @@ async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tu
         return False, None, str(e)
 
 
-async def _business_delete_message_ex(conn_id: str, chat_id: int, msg_id: int) -> tuple[bool, Optional[int], Optional[str]]:
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
+async def _business_delete_message_ex(conn_id: str, msg_id: int) -> tuple[bool, Optional[int], Optional[str]]:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteBusinessMessages"
     payload = {
         "business_connection_id": conn_id,
-        "chat_id": chat_id,
-        "message_id": msg_id,
+        "message_ids": [msg_id],
     }
     try:
         async with aiohttp.ClientSession() as session:
@@ -996,11 +995,11 @@ async def _business_delete_message_ex(conn_id: str, chat_id: int, msg_id: int) -
                     params = data.get("parameters") or {}
                     retry_after = params.get("retry_after")
                     description = data.get("description")
-                    log.warning(f"deleteMessage API error: {description}")
+                    log.warning(f"deleteBusinessMessages API error: {description}")
                     return False, retry_after, description
                 return True, None, None
     except Exception as e:
-        log.warning(f"deleteMessage HTTP: {e}")
+        log.warning(f"deleteBusinessMessages HTTP: {e}")
         return False, None, str(e)
 
 
@@ -1440,10 +1439,10 @@ async def on_business_msg(msg: Message):
         and msg.from_user.id != owner_id
         and (msg.business_connection_id, msg.chat.id) in business_muted_chats
     ):
-        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.chat.id, msg.message_id)
+        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         if not ok and retry_after:
             await asyncio.sleep(int(retry_after))
-            await _business_delete_message_ex(msg.business_connection_id, msg.chat.id, msg.message_id)
+            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         return
 
     media_type = "◆ Текст"
