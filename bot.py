@@ -80,6 +80,8 @@ business_muted_chats: set[tuple[str, int]] = set()
 business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
 
+business_code_mode: set[str] = set()
+
 # Последнее уведомление (deleted/edited) на owner_id
 # owner_id → message_id уведомления, которое нужно удалить при следующем уведомлении
 last_notify_msg: dict[int, int] = {}
@@ -1172,6 +1174,38 @@ async def on_unafk_inline(msg: Message):
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ AFK выключен")
 
 
+@dp.business_message(F.text.regexp(r"(?i)^\.code$"))
+async def on_code_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.code): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_code_mode.add(msg.business_connection_id)
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Code включён")
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.uncode$"))
+async def on_uncode_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    try:
+        conn = await bot.get_business_connection(msg.business_connection_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection (.uncode): {e}")
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_code_mode.discard(msg.business_connection_id)
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Code выключен")
+
+
 @dp.business_message(F.text.regexp(r"(?i)^\.ai\s+.+"))
 async def on_ai_inline(msg: Message):
     """
@@ -1481,7 +1515,7 @@ async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
 
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode")):
         return
 
     try:
@@ -1489,6 +1523,17 @@ async def on_business_msg(msg: Message):
         owner_id = conn.user.id
     except Exception as e:
         log.error(f"get_business_connection (save): {e}")
+        return
+
+    if (
+        msg.text
+        and msg.from_user
+        and msg.from_user.id == owner_id
+        and msg.business_connection_id in business_code_mode
+        and not msg.text.startswith(".")
+    ):
+        code_text = f"<pre><code>{html_escape(msg.text)}</code></pre>"
+        await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, code_text)
         return
 
     if (
