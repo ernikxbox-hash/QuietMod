@@ -512,7 +512,7 @@ async def on_spam(msg: Message):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
@@ -1506,9 +1506,21 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
 @dp.message(F.text.regexp(r"(?i)^\.cmd$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
 async def on_cmd(msg: Message):
     await msg.answer(
-        f"◆ <b>QUIET MOD</b> 👁️ — список функций\n{LINE}\n\n"
-        "Выбери интересующую функцию:",
+        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n{LINE}\n\n"
+        "Выбери команду:",
         reply_markup=kb_cmd(),
+    )
+
+@dp.business_message(F.text.regexp(r"(?i)^\.cmd$"))
+async def on_cmd_business(msg: Message):
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        f"◆ <b>QUIET MOD</b> 👁️ — список команд"
+    )
+    await _business_send_message_ex(
+        msg.business_connection_id, msg.chat.id,
+        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n{LINE}\n\n"
+        "Выбери команду:"
     )
 
 @dp.callback_query(F.data.startswith("cmd_info_"))
