@@ -50,6 +50,8 @@ business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
 business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
+chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
+MAX_MSG_CACHE = 200
 PROFANITY_RE = re.compile(
     r"(?iu)\b("
     r"хуй|хуе|хуя|хуи|хуё|хуйн|хуесос|хер|херн|"
@@ -349,10 +351,17 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".unwbl — выключить",
         "note": "Защита от мата, обфускации, флуда"
     },
+    "del": {
+        "title": "◇ .del",
+        "desc": "Удаляет последние сообщения в чате — и твои и собеседника.",
+        "usage": ".del [число] — удалить последние N сообщений",
+        "example": ".del 10 — удалить последние 10 сообщений",
+        "note": "Максимум: 99 сообщений за раз. Бот должен быть админом."
+    },
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl"]
+    cmd_keys = ["ai", "search", "spam", "del", "mute", "afk", "code", "wbl"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]
