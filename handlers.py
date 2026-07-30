@@ -81,6 +81,22 @@ from core import (
 )
 
 from functions import *
+from functions import (
+    _business_edit_ai_html,
+    _contains_profanity,
+    _ddg_search,
+    _edit_ai_html,
+    _extract_city,
+    _fmt_duration_ru,
+    _get_image_base64,
+    _get_weather,
+    _groq_request,
+    _is_weather_query,
+    _normalize_code_blocks,
+    _reply_ai_html,
+    _send_notify,
+    _show_home,
+)
 
 
 
