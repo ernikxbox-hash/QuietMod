@@ -1514,23 +1514,33 @@ async def on_broadcast_groups_input(msg: Message, state: FSMContext):
     status = await msg.answer(f"▤ Рассылка по группам/каналам · 0 / {len(chats)}…")
     ok = 0
     fail = 0
+    removed = 0
     for i, chat in enumerate(chats, start=1):
         try:
             await msg.copy_to(chat_id=chat["id"])
             ok += 1
         except Exception as e:
-            fail += 1
-            log.warning(f"broadcast_groups to {chat['id']} ({chat.get('title', '?')}): {e}")
+            err_str = str(e).lower()
+            if "group chat was upgraded" in err_str or "chat not found" in err_str or "migrated" in err_str:
+                await db.remove_bot_chat(chat["id"])
+                removed += 1
+                log.info(f"🧹 Удалён устаревший чат {chat['id']} ({chat.get('title', '?')}) из БД")
+            else:
+                fail += 1
+                log.warning(f"broadcast_groups to {chat['id']} ({chat.get('title', '?')}): {e}")
         await asyncio.sleep(0.05)
         if i % 10 == 0 or i == len(chats):
             try:
                 await status.edit_text(f"▤ Рассылка по группам/каналам · {i} / {len(chats)}…")
             except Exception:
                 pass
+    result_parts = [f"✔ Доставлено: <b>{ok}</b>"]
+    if fail:
+        result_parts.append(f"✕ Ошибок: <b>{fail}</b>")
+    if removed:
+        result_parts.append(f"🧹 Устаревших чатов удалено: <b>{removed}</b>")
     await status.edit_text(
-        f"▤ <b>Рассылка по группам/каналам завершена</b>\n{LINE}\n"
-        f"✔ Доставлено: <b>{ok}</b>\n"
-        f"✕ Не доставлено: <b>{fail}</b>",
+        f"▤ <b>Рассылка по группам/каналам завершена</b>\n{LINE}\n" + "\n".join(result_parts),
         reply_markup=kb_admin(),
     )
 
