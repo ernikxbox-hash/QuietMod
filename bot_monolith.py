@@ -55,13 +55,52 @@ business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
 PROFANITY_RE = re.compile(
     r"(?iu)\b("
-    r"хуй|хуе|хуя|хуи|хуё|хуйн|хуесос|хер|херн|пизд|пезд|бля|бляд|еба|ёба|ебл|уеб|уёб|"
-    r"заеб|заёб|выеб|выёб|сука|сучк|мраз|гандон|пидор|пидр|педик|ублюд|мудак|мудил|"
-    r"чмо|дыряв|тупоголов|нищ|обоссан|оссан|даун|плешив|дебил|идиот|твар|шлюх|проститут|дроч|"
+    r"хуй|хуе|хуя|хуи|хуё|хуйн|хуесос|хер|херн|"
+    r"пизд|пезд|пизж|"
+    r"бля|бляд|блядств|"
+    r"еб|ёб|йоб|уеб|уёб|выеб|выёб|заеб|заёб|наеб|наёб|проеб|проёб|"
+    r"сука|сучк|сукин|"
+    r"мраз|гандон|презерватив|"
+    r"пидор|пидр|пидорас|пидорасин|педик|"
+    r"ублюд|мудак|мудил|мудозвон|"
+    r"чмо|чмош|"
+    r"дыряв|тупоголов|нищ|обоссан|оссан|ссан|ссать|"
+    r"даун|плешив|дебил|идиот|"
+    r"твар|шлюх|проститут|"
+    r"дроч|дрочил|дрочер|"
+    r"жоп|жопа|жопник|"
+    r"говн|гавно|говно|дерьм|"
+    r"писюн|писю|"
     r"нахуй|оху|аху|"
-    r"fuck|shit|bitch|cunt"
+    r"xуй|xуе|xуя|xуи|xуё|xуйн|xуесос|huy|hui|xuy|"
+    r"pizd|pizda|pizdec|blya|blyad|ebat|eban|zaeb|naeb|uebal|"
+    r"fuck|shit|bitch|cunt|asshole|motherfuck|dick|pussy"
     r")\w*\b"
 )
+_WBL_TRANSLATE = str.maketrans({
+    "ё": "е",
+    "0": "о",
+    "3": "з",
+    "@": "а",
+    "$": "с",
+    "x": "х",
+    "y": "у",
+    "a": "а",
+    "b": "в",
+    "c": "с",
+    "e": "е",
+    "k": "к",
+    "m": "м",
+    "h": "н",
+    "o": "о",
+    "p": "р",
+    "t": "т",
+})
+_WBL_SEP_RE = re.compile(r"(?iu)[^0-9a-zа-я]+")
+_WBL_SPACE_RE = re.compile(r"\s+")
+_WBL_REPEAT_RE = re.compile(r"(?iu)(.)\1{3,}")
+_WBL_FLOOD_CHAR_RE = re.compile(r"(?iu)(.)\1{14,}")
+_WBL_FLOOD_PUNCT_RE = re.compile(r"(?u)[!?.,:;()\[\]{}<>\-_=+*/\\]{25,}")
 last_notify_msg: dict[int, int] = {}
 home_msg: dict[int, int] = {}
 
@@ -88,10 +127,65 @@ def _fmt_duration_ru(seconds: int) -> str:
         return f"{hours} ч."
     days = hours // 24
     return f"{days} дн."
+def _wbl_normalize_text(text: str) -> str:
+    t = (text or "").lower().translate(_WBL_TRANSLATE)
+    t = _WBL_SEP_RE.sub(" ", t)
+    t = _WBL_SPACE_RE.sub(" ", t).strip()
+    return t
+def _wbl_deobfuscate(norm_text: str) -> str:
+    toks = norm_text.split()
+    out: list[str] = []
+    buf: list[str] = []
+    for tok in toks:
+        if tok.isalpha() and len(tok) <= 2:
+            buf.append(tok)
+            continue
+        if buf:
+            if len(buf) >= 2 and any(len(x) == 1 for x in buf):
+                out.append("".join(buf))
+            else:
+                out.extend(buf)
+            buf = []
+        out.append(tok)
+    if buf:
+        if len(buf) >= 2 and any(len(x) == 1 for x in buf):
+            out.append("".join(buf))
+        else:
+            out.extend(buf)
+    return " ".join(out)
+def _wbl_squeeze_repeats(text: str) -> str:
+    return _WBL_REPEAT_RE.sub(lambda m: m.group(1) * 2, text)
 def _contains_profanity(text: str) -> bool:
     if not text:
         return False
-    return bool(PROFANITY_RE.search(text))
+    if PROFANITY_RE.search(text):
+        return True
+    norm = _wbl_normalize_text(text)
+    if not norm:
+        return False
+    if PROFANITY_RE.search(norm):
+        return True
+    deob = _wbl_squeeze_repeats(_wbl_deobfuscate(norm))
+    return bool(PROFANITY_RE.search(deob))
+def _wbl_looks_like_flood(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t) < 40:
+        return False
+    if _WBL_FLOOD_CHAR_RE.search(t):
+        return True
+    if _WBL_FLOOD_PUNCT_RE.search(t):
+        return True
+    compact = _WBL_SPACE_RE.sub("", t)
+    if len(compact) >= 600:
+        uniq = len(set(compact))
+        return (uniq / max(1, len(compact))) <= 0.15
+    return False
+def _wbl_should_delete(text: str) -> bool:
+    if not text:
+        return False
+    if _contains_profanity(text):
+        return True
+    return _wbl_looks_like_flood(text)
 MEDIA_MAP = {
     "photo":      "◆ Фото",
     "video":      "◆ Видео",
@@ -1172,7 +1266,7 @@ async def on_business_msg(msg: Message):
         and msg.from_user
         and msg.from_user.id != owner_id
         and (msg.business_connection_id, msg.chat.id) in business_wbl_chats
-        and _contains_profanity((msg.text or msg.caption or ""))
+        and _wbl_should_delete((msg.text or msg.caption or ""))
     ):
         ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         if not ok and retry_after:

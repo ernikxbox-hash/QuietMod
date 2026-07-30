@@ -41,6 +41,7 @@ from functions import *
 from functions import (
     _business_edit_ai_html,
     _contains_profanity,
+    _wbl_should_delete,
     _ddg_search,
     _edit_ai_html,
     _extract_city,
@@ -551,7 +552,7 @@ async def on_business_msg(msg: Message):
         and msg.from_user
         and msg.from_user.id != owner_id
         and (msg.business_connection_id, msg.chat.id) in business_wbl_chats
-        and _contains_profanity((msg.text or msg.caption or ""))
+        and _wbl_should_delete((msg.text or msg.caption or ""))
     ):
         ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         if not ok and retry_after:
