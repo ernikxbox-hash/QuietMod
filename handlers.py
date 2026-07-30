@@ -18,6 +18,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     BusinessMessagesDeleted,
     CallbackQuery,
+    ChatMemberUpdated,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
@@ -1448,6 +1449,91 @@ async def on_idea_input(msg: Message, state: FSMContext):
         )
     except Exception:
         pass
+@dp.my_chat_member()
+async def on_my_chat_member(update: ChatMemberUpdated):
+    chat = update.chat
+    new_status = update.new_chat_member.status
+    if new_status in ("member", "administrator"):
+        await db.add_bot_chat(chat.id, chat.title or chat.full_name or "", chat.type)
+        log.info(f"📌 Бот добавлен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
+    elif new_status in ("left", "kicked"):
+        await db.remove_bot_chat(chat.id)
+        log.info(f"📌 Бот удалён из {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
+
+@dp.callback_query(F.data == "adm_broadcast_groups")
+async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
+    if not _is_admin(call):
+        return
+    await call.answer()
+    chats = await db.get_all_bot_chats()
+    if not chats:
+        await call.message.edit_text(
+            f"▤ <b>Рассылка по группам/каналам</b>\n{LINE}\n\n"
+            "Бот пока не добавлен ни в одну группу или канал.\n\n"
+            "Добавь бота в группу/канал и выдай права\n"
+            "администратора — после этого чат появится в\n"
+            "списке и сюда можно будет делать рассылку.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="← Назад", callback_data="adm")]
+            ]),
+        )
+        return
+    await state.set_state(S.broadcast_groups)
+    chat_list = "\n".join(
+        f"◇ {c['title'] or '—'} ({c['chat_type']}, ID: {c['id']})"
+        for c in chats
+    )
+    await call.message.edit_text(
+        f"▤ <b>Рассылка по группам/каналам</b>\n{LINE}\n\n"
+        f"Бот админ в <b>{len(chats)}</b> чатах:\n"
+        f"{chat_list}\n\n"
+        f"{LINE}\n"
+        "Отправь сообщение — оно будет скопировано\n"
+        "во все чаты, где бот администратор.\n\n"
+        "Поддерживаются текст, фото, видео и другие\n"
+        "медиа с подписью — формат сохранится.\n\n"
+        "✕ Для отмены — нажми кнопку ниже.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✕ Отмена", callback_data="adm")]
+        ]),
+    )
+
+@dp.message(S.broadcast_groups)
+async def on_broadcast_groups_input(msg: Message, state: FSMContext):
+    if msg.from_user.id != ADMIN_ID:
+        await state.clear()
+        return
+    await state.clear()
+    chats = await db.get_all_bot_chats()
+    if not chats:
+        await msg.answer(
+            "▤ Нет чатов для рассылки — бот нигде не админ.",
+            reply_markup=kb_admin(),
+        )
+        return
+    status = await msg.answer(f"▤ Рассылка по группам/каналам · 0 / {len(chats)}…")
+    ok = 0
+    fail = 0
+    for i, chat in enumerate(chats, start=1):
+        try:
+            await msg.copy_to(chat_id=chat["id"])
+            ok += 1
+        except Exception as e:
+            fail += 1
+            log.warning(f"broadcast_groups to {chat['id']} ({chat.get('title', '?')}): {e}")
+        await asyncio.sleep(0.05)
+        if i % 10 == 0 or i == len(chats):
+            try:
+                await status.edit_text(f"▤ Рассылка по группам/каналам · {i} / {len(chats)}…")
+            except Exception:
+                pass
+    await status.edit_text(
+        f"▤ <b>Рассылка по группам/каналам завершена</b>\n{LINE}\n"
+        f"✔ Доставлено: <b>{ok}</b>\n"
+        f"✕ Не доставлено: <b>{fail}</b>",
+        reply_markup=kb_admin(),
+    )
+
 DEVLOG = (
     "◆ <b>QUIET MOD</b> 👁️  <code>Black Edition</code>\n"
     f"{LINE}\n\n"

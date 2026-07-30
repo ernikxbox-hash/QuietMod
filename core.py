@@ -29,3 +29,4 @@ class S(StatesGroup):
     ai_search = State()
     suggest_idea = State()
     broadcast = State()
+    broadcast_groups = State()

@@ -304,6 +304,7 @@ def kb_admin() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◆ Статистика",     callback_data="adm_stats")],
         [InlineKeyboardButton(text="✦ Предложения",    callback_data="adm_ideas")],
         [InlineKeyboardButton(text="▤ Сообщение всем", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="▤ По группам/каналам", callback_data="adm_broadcast_groups")],
         [InlineKeyboardButton(text="← В меню",         callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (

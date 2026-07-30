@@ -102,6 +102,13 @@ async def init_db():
     CREATE INDEX IF NOT EXISTS idx_messages_owner ON messages(owner_id);
     CREATE INDEX IF NOT EXISTS idx_messages_owner_msg ON messages(owner_id, msg_id);
     CREATE INDEX IF NOT EXISTS idx_saved_owner ON saved_messages(owner_id);
+
+    CREATE TABLE IF NOT EXISTS bot_chats (
+        id          INTEGER PRIMARY KEY,
+        title       TEXT,
+        chat_type   TEXT NOT NULL,
+        added_at    TEXT NOT NULL
+    );
     """)
     await _conn.commit()
     try:
@@ -382,6 +389,34 @@ async def count_saved_messages(owner_id: int) -> int:
         (owner_id, now)
     ) as cur:
         return (await cur.fetchone())[0]
+async def add_bot_chat(chat_id: int, title: str, chat_type: str):
+    conn = _get_conn()
+    now = datetime.now().isoformat()
+    async with _write_lock:
+        await conn.execute("""
+            INSERT INTO bot_chats (id, title, chat_type, added_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title     = excluded.title,
+                chat_type = excluded.chat_type
+        """, (chat_id, title or "", chat_type, now))
+        await conn.commit()
+async def remove_bot_chat(chat_id: int):
+    conn = _get_conn()
+    async with _write_lock:
+        await conn.execute("DELETE FROM bot_chats WHERE id=?", (chat_id,))
+        await conn.commit()
+async def get_all_bot_chats() -> list[dict]:
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT * FROM bot_chats ORDER BY added_at DESC"
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+async def count_bot_chats() -> int:
+    conn = _get_conn()
+    async with conn.execute("SELECT COUNT(*) FROM bot_chats") as cur:
+        return (await cur.fetchone())[0]
+
 async def purge_expired_saved():
     conn = _get_conn()
     now = datetime.now().isoformat()
