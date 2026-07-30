@@ -299,6 +299,137 @@ def kb_premium() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="◇ Вклад · 500★  (+30 дн. VIP)", callback_data="pay_donate_500")],
         [InlineKeyboardButton(text="← В меню",                       callback_data="back_menu")],
     ])
+CMD_FEATURES: dict[str, dict] = {
+    "ai": {
+        "title": "◆ ИИ-консьерж",
+        "desc": "Задай любой вопрос — ИИ ответит чётко и быстро. Работает с текстом и изображениями.",
+        "usage": ".ai твой вопрос",
+        "example": ".ai объясни теорию относительности",
+        "note": "Безлимитно для всех. Работает в группах, каналах и бизнес-переписке."
+    },
+    "search": {
+        "title": "◐ Поиск в интернете",
+        "desc": "Ищет информацию через DuckDuckGo и обрабатывает результат ИИ.",
+        "usage": ".search запрос",
+        "example": ".search курс доллара сегодня",
+        "note": "Также определяет погоду: .search погода в Лондоне"
+    },
+    "spam": {
+        "title": "◇ .spam — Спам-рассылка",
+        "desc": "Отправляет указанное количество одинаковых сообщений в чат.",
+        "usage": ".spam текст число",
+        "example": ".spam Привет 10",
+        "note": ".spam stop — остановить"
+    },
+    "mute": {
+        "title": "◇ .mute — Режим тишины",
+        "desc": "Автоматически удаляет все входящие сообщения от собеседника в личном чате.",
+        "usage": ".mute — включить",
+        "example": ".unmute — выключить",
+        "note": "Только для личных чатов (private)"
+    },
+    "afk": {
+        "title": "◇ .afk — Режим 'Нет на месте'",
+        "desc": "Автоматически отвечает собеседникам, что ты не в сети.",
+        "usage": ".afk [заметка] — включить",
+        "example": ".afk вернусь через час",
+        "note": ".unafk — выключить"
+    },
+    "code": {
+        "title": "◇ .code — Режим кода",
+        "desc": "Всё, что ты пишешь, автоматически форматируется как код.",
+        "usage": ".code — включить",
+        "example": ".uncode — выключить",
+        "note": "Текст оборачивается в <pre><code>...</code></pre>"
+    },
+    "wbl": {
+        "title": "◇ .wbl — Фильтр мата и флуда",
+        "desc": "Автоматически удаляет сообщения с нецензурной лексикой и флудом от собеседника.",
+        "usage": ".wbl — включить",
+        "example": ".unwbl — выключить",
+        "note": "Защита от мата, обфускации, повторов и флуда"
+    },
+    "intercept": {
+        "title": "✕ Перехват удалённых сообщений",
+        "desc": "Мгновенно получай содержимое удалённых сообщений: текст, фото, видео, голосовые, стикеры, GIF.",
+        "usage": "Требуется Telegram Business → Автоматизация чатов",
+        "example": "Собеседник удалил — бот присылает",
+        "note": "Свои удалённые не присылаются — только чужие"
+    },
+    "edit": {
+        "title": "✦ Перехват изменённых сообщений",
+        "desc": "Отслеживает редактирование сообщений в реальном времени. Видно что было и что стало.",
+        "usage": "Требуется Telegram Business → Автоматизация чатов",
+        "example": "Собеседник отредактировал — бот присылает оба варианта",
+        "note": "Автоматически, без команд"
+    },
+    "transcribe": {
+        "title": "🎙 Расшифровка голосовых",
+        "desc": "Удалённое голосовое сообщение автоматически расшифруется в текст.",
+        "usage": "Автоматически при удалении голосового",
+        "example": "Whisper AI — точность 95%+",
+        "note": "Работает только с Telegram Business"
+    },
+    "archive": {
+        "title": "▣ Архив сообщений",
+        "desc": "Все перехваченные сообщения сохраняются в архиве.",
+        "usage": "Кнопка «▣ Архив» в меню бота",
+        "example": "Базовый: 20 записей · VIP: 200 записей",
+        "note": "VIP: поиск по архиву через кнопку «◐ Поиск»"
+    },
+    "save": {
+        "title": "◆ Сохранить навсегда",
+        "desc": "Сохраняет уведомление об удалённом/изменённом сообщении на 7 дней.",
+        "usage": "Нажми «◆ Сохранить ➩» под уведомлением",
+        "example": "Хранится в разделе «◈ Сохранённые ➩»",
+        "note": "Автоматически удаляется через 7 дней"
+    },
+    "vip": {
+        "title": "◈ VIP-статус",
+        "desc": "Премиум-доступ с расширенными возможностями. 50⭐ / месяц.",
+        "usage": "Нажми «◈ VIP» в меню бота. Оплата Telegram Stars.",
+        "example": "Архив 200 записей · Поиск по архиву · Метка ◈",
+        "note": "Оплата через Telegram Stars (XTR)"
+    },
+    "donate": {
+        "title": "◇ Вклад в проект",
+        "desc": "Поддержи развитие проекта. 100⭐+ единоразово.",
+        "usage": "Нажми «◈ VIP» → выбери сумму вклада",
+        "example": "Метка ◇ навсегда · +30 дней VIP",
+        "note": "Варианты: 100⭐, 200⭐, 500⭐"
+    },
+    "referral": {
+        "title": "⟡ Реферальная система",
+        "desc": "Приглашай друзей по уникальной ссылке.",
+        "usage": "Кнопка «⟡ Приглашения» в меню бота",
+        "example": "https://t.me/Quiet_Mod_bot?start=ref_ТВОЙ_ID",
+        "note": "Чем больше друзей — тем больше проект"
+    },
+    "idea": {
+        "title": "✦ Предложить идею",
+        "desc": "Отправь предложение по улучшению бота напрямую разработчику.",
+        "usage": "Кнопка «✦ Предложить» в меню бота",
+        "example": "Напиши свою идею текстом",
+        "note": "Лучшие идеи попадают в обновления"
+    },
+}
+
+def kb_cmd() -> InlineKeyboardMarkup:
+    rows = []
+    main_features = [
+        ("ai", "ai"), ("search", "search"), ("intercept", "intercept"), ("edit", "edit"),
+        ("archive", "archive"), ("save", "save"), ("transcribe", "transcribe"),
+        ("vip", "vip"), ("donate", "donate"), ("referral", "referral"), ("idea", "idea"),
+    ]
+    for key, label in main_features:
+        rows.append([InlineKeyboardButton(text=CMD_FEATURES[key]["title"], callback_data=f"cmd_info_{key}")])
+    inline_cmds = [("spam", "spam"), ("mute", "mute"), ("afk", "afk"), ("code", "code"), ("wbl", "wbl")]
+    rows.append([InlineKeyboardButton(text="⚙ Инлайн-команды Business", callback_data="noop")])
+    for key, label in inline_cmds:
+        rows.append([InlineKeyboardButton(text=CMD_FEATURES[key]["title"], callback_data=f"cmd_info_{key}")])
+    rows.append([InlineKeyboardButton(text="✕ Закрыть", callback_data="cmd_close")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◆ Пользователи",   callback_data="adm_users")],

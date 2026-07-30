@@ -1453,9 +1453,14 @@ async def on_idea_input(msg: Message, state: FSMContext):
 async def on_my_chat_member(update: ChatMemberUpdated):
     chat = update.chat
     new_status = update.new_chat_member.status
-    if new_status in ("member", "administrator"):
-        await db.add_bot_chat(chat.id, chat.title or chat.full_name or "", chat.type)
-        log.info(f"📌 Бот добавлен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
+    if new_status in ("member", "administrator", "restricted"):
+        was_added = new_status != "restricted" or update.old_chat_member.status in ("left", "kicked")
+        if was_added or new_status == "administrator" or new_status == "member":
+            await db.add_bot_chat(chat.id, chat.title or chat.full_name or "", chat.type)
+            if new_status == "restricted":
+                log.info(f"📌 Бот ограничен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id}) — оставлен в списке")
+            else:
+                log.info(f"📌 Бот добавлен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
     elif new_status in ("left", "kicked"):
         await db.remove_bot_chat(chat.id)
         log.info(f"📌 Бот удалён из {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
@@ -1497,6 +1502,51 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
             [InlineKeyboardButton(text="✕ Отмена", callback_data="adm")]
         ]),
     )
+
+@dp.message(F.text.regexp(r"(?i)^\.cmd$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
+async def on_cmd(msg: Message):
+    await msg.answer(
+        f"◆ <b>QUIET MOD</b> 👁️ — список функций\n{LINE}\n\n"
+        "Выбери интересующую функцию:",
+        reply_markup=kb_cmd(),
+    )
+
+@dp.callback_query(F.data.startswith("cmd_info_"))
+async def cb_cmd_info(call: CallbackQuery):
+    key = call.data.replace("cmd_info_", "")
+    feat = CMD_FEATURES.get(key)
+    if not feat:
+        await call.answer("Функция не найдена", show_alert=True)
+        return
+    text = (
+        f"{feat['title']}\n{LINE}\n\n"
+        f"{feat['desc']}\n\n"
+        f"<b>Использование:</b>\n<code>{feat['usage']}</code>\n\n"
+        f"<b>Пример:</b>\n<code>{feat['example']}</code>\n\n"
+        f"◇ {feat['note']}"
+    )
+    await call.answer()
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← К списку", callback_data="cmd_back")],
+        [InlineKeyboardButton(text="✕ Закрыть", callback_data="cmd_close")],
+    ]))
+
+@dp.callback_query(F.data == "cmd_back")
+async def cb_cmd_back(call: CallbackQuery):
+    await call.answer()
+    await call.message.edit_text(
+        f"◆ <b>QUIET MOD</b> 👁️ — список функций\n{LINE}\n\n"
+        "Выбери интересующую функцию:",
+        reply_markup=kb_cmd(),
+    )
+
+@dp.callback_query(F.data == "cmd_close")
+async def cb_cmd_close(call: CallbackQuery):
+    await call.answer("✕ Закрыто")
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
 
 @dp.message(S.broadcast_groups)
 async def on_broadcast_groups_input(msg: Message, state: FSMContext):

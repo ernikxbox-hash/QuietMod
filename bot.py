@@ -5,9 +5,25 @@ from core import ADMIN_ID, bot, dp, log
 from tasks import _purge_loop
 import handlers
 
+async def _sync_bot_chats():
+    chats = await db.get_all_bot_chats()
+    for chat in chats:
+        try:
+            c = await bot.get_chat(chat["id"])
+            member = await bot.get_chat_member(chat["id"], bot.id)
+            if member.status in ("left", "kicked"):
+                await db.remove_bot_chat(chat["id"])
+                log.info(f"🧹 Бот больше не в чате {chat['id']} ({chat.get('title', '?')}) — удалён из БД")
+        except Exception:
+            await db.remove_bot_chat(chat["id"])
+            log.info(f"🧹 Чат {chat['id']} недоступен — удалён из БД")
+    if chats:
+        log.info(f"📌 Синхронизация чатов завершена: {len(chats)} проверено")
+
 async def main():
     await db.init_db()
     await db.purge_expired_saved()
+    await _sync_bot_chats()
     log.info("🚀 Quiet Mod 👁️ запускается...")
     try:
         await bot.send_message(
