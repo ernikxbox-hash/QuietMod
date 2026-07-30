@@ -339,6 +339,7 @@ async def on_ai_group(msg: Message):
     if not question:
         return
     await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
+    await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
     thinking = await msg.reply("◆ · · ·")
     image_b64 = None
     if msg.photo:
@@ -420,6 +421,7 @@ async def on_search_group(msg: Message):
     if not query:
         return
     await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
+    await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
     thinking = await msg.reply("◐ · · ·")
     if _is_weather_query(query):
         city = _extract_city(query)
@@ -512,7 +514,7 @@ async def on_spam(msg: Message):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".del")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
@@ -1566,73 +1568,6 @@ async def cb_cmd_close(call: CallbackQuery):
     except Exception:
         pass
 
-@dp.message(F.text.regexp(r"(?i)^\.del\s*(\d*)$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
-async def on_del(msg: Message):
-    if not msg.from_user:
-        return
-    match = __import__("re").match(r"(?i)^\.del\s*(\d*)$", msg.text or "")
-    count = int(match.group(1)) if match and match.group(1) else 1
-    count = min(max(count, 1), 99)
-    chat_id = msg.chat.id
-    ids = chat_msg_ids.get(chat_id, [])
-    to_delete = list(set(ids))[:count]
-    if msg.message_id not in to_delete:
-        to_delete.append(msg.message_id)
-    to_delete = list(set(to_delete))[:count + 1]
-    deleted = 0
-    for i in range(0, len(to_delete), 100):
-        batch = to_delete[i:i+100]
-        try:
-            await bot.delete_messages(chat_id, batch)
-            deleted += len(batch)
-        except Exception as e:
-            log.warning(f".del batch {batch}: {e}")
-            for mid in batch:
-                try:
-                    await bot.delete_message(chat_id, mid)
-                    deleted += 1
-                except Exception:
-                    pass
-    if chat_id in chat_msg_ids:
-        chat_msg_ids[chat_id] = [m for m in chat_msg_ids[chat_id] if m not in to_delete]
-    status = await msg.answer(f"◇ Удалено: {deleted} сообщений", parse_mode=None)
-    await asyncio.sleep(3)
-    try:
-        await status.delete()
-    except Exception:
-        pass
-
-@dp.business_message(F.text.regexp(r"(?i)^\.del\s*(\d*)$"))
-async def on_del_business(msg: Message):
-    if not msg.business_connection_id:
-        return
-    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".del")
-    if owner_id is None:
-        return
-    if not msg.from_user or msg.from_user.id != owner_id:
-        return
-    match = __import__("re").match(r"(?i)^\.del\s*(\d*)$", msg.text or "")
-    count = int(match.group(1)) if match and match.group(1) else 1
-    count = min(max(count, 1), 99)
-    chat_id = msg.chat.id
-    conn_id = msg.business_connection_id
-    ids = chat_msg_ids.get(chat_id, [])
-    to_delete = list(set(ids))[:count]
-    if msg.message_id not in to_delete:
-        to_delete.append(msg.message_id)
-    to_delete = list(set(to_delete))[:count + 1]
-    deleted = 0
-    for mid in to_delete:
-        ok, _, _ = await _business_delete_message_ex(conn_id, mid)
-        if ok:
-            deleted += 1
-    if chat_id in chat_msg_ids:
-        chat_msg_ids[chat_id] = [m for m in chat_msg_ids[chat_id] if m not in to_delete]
-    try:
-        await _business_edit_message(conn_id, chat_id, msg.message_id, f"◇ Удалено: {deleted}")
-    except Exception:
-        pass
-
 @dp.message(S.broadcast_groups)
 async def on_broadcast_groups_input(msg: Message, state: FSMContext):
     if msg.from_user.id != ADMIN_ID:
@@ -1769,3 +1704,16 @@ async def _broadcast_devlog():
         await bot.send_message(ADMIN_ID, f"▤ DevLog разослан: ✔ {ok} · ✕ {fail}")
     except Exception:
         pass
+
+@dp.message(F.chat.type.in_({"group", "supergroup", "channel"}))
+@dp.channel_post()
+async def on_group_msg(msg: Message):
+    """Сохраняет чат в БД при любом сообщении в группе/канале."""
+    if msg.chat.type in ("group", "supergroup", "channel"):
+        await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
+        if msg.from_user:
+            await db.upsert_user(
+                msg.from_user.id,
+                msg.from_user.username or "",
+                msg.from_user.full_name or "",
+            )

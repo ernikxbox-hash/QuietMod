@@ -19,6 +19,8 @@ async def _sync_bot_chats():
             log.info(f"🧹 Чат {chat['id']} недоступен — удалён из БД")
     if chats:
         log.info(f"📌 Синхронизация чатов завершена: {len(chats)} проверено")
+    else:
+        log.info("📌 Нет сохранённых чатов — бот подхватит их при первом сообщении в группе")
 
 async def main():
     await db.init_db()

@@ -351,17 +351,10 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".unwbl — выключить",
         "note": "Защита от мата, обфускации, флуда"
     },
-    "del": {
-        "title": "◇ .del",
-        "desc": "Удаляет последние сообщения в чате — и твои и собеседника.",
-        "usage": ".del [число] — удалить последние N сообщений",
-        "example": ".del 10 — удалить последние 10 сообщений",
-        "note": "Максимум: 99 сообщений за раз. Бот должен быть админом."
-    },
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "del", "mute", "afk", "code", "wbl"]
+    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]
