@@ -61,6 +61,21 @@ from business_api import (
     _business_edit_message_ex,
     _business_send_message_ex,
 )
+_BC_OWNER_CACHE: dict[str, tuple[int, float]] = {}
+_BC_OWNER_TTL_SECONDS = 10 * 60
+async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
+    now = asyncio.get_running_loop().time()
+    cached = _BC_OWNER_CACHE.get(conn_id)
+    if cached and cached[1] > now:
+        return cached[0]
+    try:
+        conn = await bot.get_business_connection(conn_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection ({ctx}): {e}")
+        return None
+    _BC_OWNER_CACHE[conn_id] = (owner_id, now + _BC_OWNER_TTL_SECONDS)
+    return owner_id
 @dp.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
@@ -135,11 +150,8 @@ async def _business_spam_worker(conn_id: str, chat_id: int, owner_id: int, text:
 async def on_spam_inline(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.spam): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".spam")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -181,11 +193,8 @@ async def on_mute_inline(msg: Message):
         return
     if getattr(msg.chat, "type", None) != "private":
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.mute): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".mute")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -197,11 +206,8 @@ async def on_unmute_inline(msg: Message):
         return
     if getattr(msg.chat, "type", None) != "private":
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.unmute): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".unmute")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -211,11 +217,8 @@ async def on_unmute_inline(msg: Message):
 async def on_afk_inline(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.afk): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".afk")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -232,11 +235,8 @@ async def on_afk_inline(msg: Message):
 async def on_unafk_inline(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.unafk): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".unafk")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -247,11 +247,8 @@ async def on_unafk_inline(msg: Message):
 async def on_code_inline(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.code): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".code")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -261,11 +258,8 @@ async def on_code_inline(msg: Message):
 async def on_uncode_inline(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.uncode): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".uncode")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -277,11 +271,8 @@ async def on_wbl_inline(msg: Message):
         return
     if getattr(msg.chat, "type", None) != "private":
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.wbl): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".wbl")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -293,11 +284,8 @@ async def on_unwbl_inline(msg: Message):
         return
     if getattr(msg.chat, "type", None) != "private":
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.unwbl): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".unwbl")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -307,11 +295,8 @@ async def on_unwbl_inline(msg: Message):
 async def on_ai_inline(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.ai): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".ai")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -375,11 +360,8 @@ async def on_ai_group(msg: Message):
 async def on_search_inline(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (.search): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".search")
+    if owner_id is None:
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
@@ -531,11 +513,8 @@ async def on_business_msg(msg: Message):
         return
     if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl")):
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (save): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
+    if owner_id is None:
         return
     if (
         msg.text
@@ -558,7 +537,7 @@ async def on_business_msg(msg: Message):
         if not ok and retry_after:
             await asyncio.sleep(int(retry_after))
             await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
-        log.info(f"🧹 wbl deleted msg={msg.message_id} owner={owner_id}")
+        log.debug(f"🧹 wbl deleted msg={msg.message_id} owner={owner_id}")
         return
     if (
         getattr(msg.chat, "type", None) == "private"
@@ -617,16 +596,13 @@ async def on_business_msg(msg: Message):
         "media_type": media_type,
         "file_id":    file_id,
     })
-    log.info(f"📥 cached msg={msg.message_id} owner={owner_id}")
+    log.debug(f"📥 cached msg={msg.message_id} owner={owner_id}")
 @dp.edited_business_message()
 async def on_edited_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    try:
-        conn = await bot.get_business_connection(msg.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (edit): {e}")
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, "edit")
+    if owner_id is None:
         return
     new_text = msg.text or msg.caption or ""
     is_bot_edit = (
@@ -687,7 +663,7 @@ async def on_edited_business_msg(msg: Message):
         "media_type": media_type,
         "file_id":    file_id,
     })
-    log.info(f"✏️ updated msg={msg.message_id} owner={owner_id} bot_edit={is_bot_edit}")
+    log.debug(f"✏️ updated msg={msg.message_id} owner={owner_id} bot_edit={is_bot_edit}")
 async def _transcribe_voice(file_id: str) -> Optional[str]:
     try:
         file = await bot.get_file(file_id)
@@ -727,12 +703,9 @@ async def _send_media(owner_id: int, file_id: str, mt: str):
         log.warning(f"Media send: {e}")
 @dp.deleted_business_messages()
 async def on_deleted(event: BusinessMessagesDeleted):
-    log.info(f"🚨 deleted conn={event.business_connection_id} ids={event.message_ids}")
-    try:
-        conn = await bot.get_business_connection(event.business_connection_id)
-        owner_id = conn.user.id
-    except Exception as e:
-        log.error(f"get_business_connection (delete): {e}")
+    log.debug(f"🚨 deleted conn={event.business_connection_id} ids={event.message_ids}")
+    owner_id = await _get_owner_id_cached(event.business_connection_id, "delete")
+    if owner_id is None:
         return
     for msg_id in event.message_ids:
         cached = await db.get_message(owner_id, msg_id)

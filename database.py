@@ -8,6 +8,21 @@ DB_PATH = "data/bot.db"
 log = logging.getLogger("db")
 _conn: Optional[aiosqlite.Connection] = None
 _write_lock = asyncio.Lock()
+_msg_write_queue: Optional[asyncio.Queue] = None
+_msg_writer_task: Optional[asyncio.Task] = None
+_owner_limit_cache: dict[int, tuple[int, float]] = {}
+_owner_cleanup_counter: dict[int, int] = {}
+_OWNER_LIMIT_TTL_SECONDS = 5 * 60
+_MSG_BATCH_MAX = 60
+_MSG_BATCH_WAIT_SECONDS = 0.25
+_OWNER_CLEANUP_EVERY = 25
+
+def _ensure_msg_writer_started():
+    global _msg_write_queue, _msg_writer_task
+    if _msg_write_queue is None:
+        _msg_write_queue = asyncio.Queue(maxsize=4000)
+    if _msg_writer_task is None or _msg_writer_task.done():
+        _msg_writer_task = asyncio.create_task(_msg_writer_loop())
 
 def _get_conn() -> aiosqlite.Connection:
     if _conn is None:
@@ -95,9 +110,21 @@ async def init_db():
         log.info("🔧 Миграция: добавлена колонка sender_id")
     except Exception:
         pass
+    _ensure_msg_writer_started()
     log.info("✅ DB инициализирована")
 async def close_db():
     global _conn
+    global _msg_writer_task, _msg_write_queue
+    if _msg_writer_task is not None:
+        _msg_writer_task.cancel()
+        try:
+            await _msg_writer_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        _msg_writer_task = None
+    _msg_write_queue = None
     if _conn is not None:
         await _conn.close()
         _conn = None
@@ -160,37 +187,69 @@ async def get_all_users(limit: int = 50, offset: int = 0) -> list[dict]:
 FREE_CACHE_LIMIT    = 20
 PREMIUM_CACHE_LIMIT = 200
 
-async def save_message(owner_id: int, msg: dict):
+async def _get_owner_limit(owner_id: int) -> int:
+    now = asyncio.get_running_loop().time()
+    cached = _owner_limit_cache.get(owner_id)
+    if cached and cached[1] > now:
+        return cached[0]
     limit = PREMIUM_CACHE_LIMIT if await is_premium(owner_id) else FREE_CACHE_LIMIT
-    now   = datetime.now().isoformat()
-    db = _get_conn()
-    async with _write_lock:
-        await db.execute("""
-            INSERT INTO messages
-              (owner_id, msg_id, sender_id, from_name, username, chat, date, text, media_type, file_id, created_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(owner_id, msg_id) DO UPDATE SET
-                sender_id  = excluded.sender_id,
-                from_name  = excluded.from_name,
-                username   = excluded.username,
-                chat       = excluded.chat,
-                date       = excluded.date,
-                text       = excluded.text,
-                media_type = excluded.media_type,
-                file_id    = excluded.file_id
-        """, (
-            owner_id, msg["msg_id"], msg.get("sender_id"), msg["from_name"], msg["username"],
-            msg["chat"], msg["date"], msg["text"],
-            msg["media_type"], msg["file_id"], now
-        ))
-        await db.execute("""
-            DELETE FROM messages
-            WHERE owner_id=? AND id NOT IN (
-                SELECT id FROM messages WHERE owner_id=?
-                ORDER BY id DESC LIMIT ?
-            )
-        """, (owner_id, owner_id, limit))
-        await db.commit()
+    _owner_limit_cache[owner_id] = (limit, now + _OWNER_LIMIT_TTL_SECONDS)
+    return limit
+
+async def _msg_writer_loop():
+    while True:
+        item = await _msg_write_queue.get()
+        batch = [item]
+        deadline = asyncio.get_running_loop().time() + _MSG_BATCH_WAIT_SECONDS
+        while len(batch) < _MSG_BATCH_MAX:
+            now = asyncio.get_running_loop().time()
+            if now >= deadline:
+                break
+            try:
+                batch.append(_msg_write_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                await asyncio.sleep(0)
+                break
+        db = _get_conn()
+        async with _write_lock:
+            for owner_id, msg in batch:
+                limit = await _get_owner_limit(owner_id)
+                now_iso = datetime.now().isoformat()
+                await db.execute("""
+                    INSERT INTO messages
+                      (owner_id, msg_id, sender_id, from_name, username, chat, date, text, media_type, file_id, created_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(owner_id, msg_id) DO UPDATE SET
+                        sender_id  = excluded.sender_id,
+                        from_name  = excluded.from_name,
+                        username   = excluded.username,
+                        chat       = excluded.chat,
+                        date       = excluded.date,
+                        text       = excluded.text,
+                        media_type = excluded.media_type,
+                        file_id    = excluded.file_id
+                """, (
+                    owner_id, msg["msg_id"], msg.get("sender_id"), msg["from_name"], msg["username"],
+                    msg["chat"], msg["date"], msg["text"],
+                    msg["media_type"], msg["file_id"], now_iso
+                ))
+                c = _owner_cleanup_counter.get(owner_id, 0) + 1
+                if c >= _OWNER_CLEANUP_EVERY:
+                    await db.execute("""
+                        DELETE FROM messages
+                        WHERE owner_id=? AND id NOT IN (
+                            SELECT id FROM messages WHERE owner_id=?
+                            ORDER BY id DESC LIMIT ?
+                        )
+                    """, (owner_id, owner_id, limit))
+                    c = 0
+                _owner_cleanup_counter[owner_id] = c
+            await db.commit()
+
+async def save_message(owner_id: int, msg: dict):
+    _get_conn()
+    _ensure_msg_writer_started()
+    await _msg_write_queue.put((owner_id, msg))
 async def get_message(owner_id: int, msg_id: int) -> Optional[dict]:
     db = _get_conn()
     async with db.execute(
