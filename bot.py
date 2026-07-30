@@ -1592,6 +1592,20 @@ async def on_business_msg(msg: Message):
         getattr(msg.chat, "type", None) == "private"
         and msg.from_user
         and msg.from_user.id != owner_id
+        and (msg.business_connection_id, msg.chat.id) in business_wbl_chats
+        and _contains_profanity((msg.text or msg.caption or ""))
+    ):
+        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        log.info(f"🧹 wbl deleted msg={msg.message_id} owner={owner_id}")
+        return
+
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
         and (msg.business_connection_id, msg.chat.id) in business_muted_chats
     ):
         ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
