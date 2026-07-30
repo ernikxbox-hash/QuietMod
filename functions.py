@@ -106,6 +106,7 @@ class S(StatesGroup):
     ai_search    = State()
     suggest_idea = State()
     broadcast    = State()
+    broadcast_groups = State()
 LINE = "──────────────────"
 MSK = timezone(timedelta(hours=3))
 
