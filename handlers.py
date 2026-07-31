@@ -769,7 +769,7 @@ async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await call.message.edit_text(
         f"◆ <b>ИИ-консьерж</b>\n{LINE}\n"
-        f"Модель: <b>Llama 4 Scout · Vision</b>\n"
+        f"Модель: <b>Llama 4 Maverick · Vision</b>\n"
         f"Лимит: <b>без ограничений</b>\n\n"
         "Спрашивай что угодно — отвечу тихо и быстро ◆",
         reply_markup=kb_ai(),

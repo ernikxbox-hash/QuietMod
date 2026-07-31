@@ -32,7 +32,7 @@ BOT_TOKEN    = os.environ["BOT_TOKEN"]
 ADMIN_ID     = int(os.environ["ADMIN_ID"])
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 BOT_USERNAME = "Quiet_Mod_bot"
-GROQ_MODEL       = "meta-llama/llama-4-scout-17b-16e-instruct"
+GROQ_MODEL       = "meta-llama/llama-4-maverick-17b-128e-instruct"
 GROQ_MODEL_TEXT  = "llama-3.3-70b-versatile"
 BRAND_NAME = "Quiet Mod 👁️"
 PREMIUM_MONTHLY_STARS = 50
@@ -1474,7 +1474,7 @@ async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await call.message.edit_text(
         f"◆ <b>ИИ-консьерж</b>\n{LINE}\n"
-        f"Модель: <b>Llama 4 Scout · Vision</b>\n"
+        f"Модель: <b>Llama 4 Maverick · Vision</b>\n"
         f"Лимит: <b>без ограничений</b>\n\n"
         "Спрашивай что угодно — отвечу тихо и быстро ◆",
         reply_markup=kb_ai(),
@@ -2272,7 +2272,7 @@ async def main():
         await bot.send_message(
             ADMIN_ID,
             f"✔ <b>Бот запущен</b> · Quiet Mod 👁️ · SQLite · Railway\n"
-            f"◇ Модель: Llama 4 Scout (Vision)"
+            f"◇ Модель: Llama 4 Maverick (Vision)"
         )
     except Exception:
         pass

@@ -651,7 +651,7 @@ def _sanitize_text_messages(messages: list) -> list:
 
 
 def _sanitize_vision_messages(messages: list) -> list:
-    """Гарантирует формат для VISION-модели Groq (llama-4-scout).
+    """Гарантирует формат для VISION-модели Groq (llama-4-maverick).
 
     content может быть строкой ИЛИ списком частей image_url/text.
     Некорректные типы приводятся к строке. Работаем с копиями.
