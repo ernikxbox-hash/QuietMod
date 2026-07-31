@@ -315,7 +315,7 @@ async def on_ai_inline(msg: Message):
     try:
         answer = await groq_chat(owner_id, question or "Опиши что на фото.", image_base64=image_b64)
     except Exception as e:
-        log.error(f"ai inline groq: {e}")
+        log.error(f"ai inline groq: {e}", exc_info=True)
         answer = "⚠️ ИИ временно недоступен — попробуй позже."
     try:
         await _business_edit_ai_html(
@@ -347,7 +347,7 @@ async def on_ai_group(msg: Message):
     try:
         answer = await groq_chat(uid, question, image_base64=image_b64)
     except Exception as e:
-        log.error(f"ai group groq: {e}")
+        log.error(f"ai group groq: {e}", exc_info=True)
         answer = "⚠️ ИИ временно недоступен — попробуй позже."
     try:
         await _edit_ai_html(thinking, prefix="◆ ", answer=answer)

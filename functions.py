@@ -619,7 +619,78 @@ def _needs_search_preemptive(user_msg: str) -> bool:
     ):
         return True
     return False
+def _sanitize_text_messages(messages: list) -> list:
+    """Гарантирует формат для ТЕКСТОВОЙ модели Groq: content всегда строка.
+
+    Vision-сообщения (content — список частей image_url/text) преобразуются
+    в строку: извлекается текстовая часть, при её отсутствии используется
+    нейтральный маркер. Картинки в текстовую модель не передаются.
+    Работаем с копиями — исходная история не изменяется.
+    """
+    out: list[dict] = []
+    for m in messages:
+        m = dict(m)
+        content = m.get("content")
+        if isinstance(content, str):
+            out.append(m)
+            continue
+        if isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    t = part.get("text")
+                    if isinstance(t, str) and t.strip():
+                        text_parts.append(t.strip())
+            m["content"] = "\n".join(text_parts) if text_parts else "[изображение]"
+        elif content is None:
+            m["content"] = ""
+        else:
+            m["content"] = str(content)
+        out.append(m)
+    return out
+
+
+def _sanitize_vision_messages(messages: list) -> list:
+    """Гарантирует формат для VISION-модели Groq (llama-4-scout).
+
+    content может быть строкой ИЛИ списком частей image_url/text.
+    Некорректные типы приводятся к строке. Работаем с копиями.
+    """
+    out: list[dict] = []
+    for m in messages:
+        m = dict(m)
+        content = m.get("content")
+        if isinstance(content, str):
+            out.append(m)
+            continue
+        if isinstance(content, list):
+            valid = all(
+                isinstance(p, dict) and isinstance(p.get("type"), str) and p.get("type")
+                for p in content
+            )
+            if valid:
+                out.append(m)
+                continue
+            m["content"] = str(content)
+        elif content is None:
+            m["content"] = ""
+        else:
+            m["content"] = str(content)
+        out.append(m)
+    return out
+
+
 async def _groq_request(messages: list, max_tokens: int = 2048, temperature: float = 0.7, model: str = GROQ_MODEL) -> Optional[str]:
+    """Отправка запроса в Groq с гарантией корректного формата messages.
+
+    Перед отправкой история приводится к формату выбранной модели:
+    — vision-модель (GROQ_MODEL): строки и списки частей image_url/text;
+    — все остальные модели (включая GROQ_MODEL_TEXT): ТОЛЬКО строки.
+    """
+    if model == GROQ_MODEL:
+        messages = _sanitize_vision_messages(messages)
+    else:
+        messages = _sanitize_text_messages(messages)
     payload = {
         "model": model,
         "messages": messages,
@@ -642,17 +713,27 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
                 try:
                     data = _json.loads(raw)
                 except Exception:
-                    log.error(f"Groq non-JSON (status {resp.status}): {raw[:300]}")
+                    log.error(
+                        f"Groq non-JSON response (model={model}, status={resp.status}, "
+                        f"body={raw[:1000]})",
+                        exc_info=True,
+                    )
                     return None
                 if "choices" not in data:
-                    log.error(f"Groq unexpected: {data}")
+                    log.error(
+                        f"Groq unexpected response (model={model}, status={resp.status}, "
+                        f"body={_json.dumps(data, ensure_ascii=False)})"
+                    )
                     return None
                 return data["choices"][0]["message"]["content"].strip()
     except asyncio.TimeoutError:
-        log.warning("Groq timeout")
+        log.warning(f"Groq request timeout (model={model})")
+        return None
+    except aiohttp.ClientError as e:
+        log.error(f"Groq HTTP request failed (model={model}): {e!r}", exc_info=True)
         return None
     except Exception as e:
-        log.error(f"Groq request: {e}")
+        log.error(f"Groq request failed (model={model}): {e!r}", exc_info=True)
         return None
 def _normalize_code_blocks(text: str) -> str:
     text = re.sub(
