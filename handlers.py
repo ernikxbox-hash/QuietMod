@@ -316,7 +316,12 @@ async def on_ai_inline(msg: Message):
         answer = await groq_chat(owner_id, question or "Опиши что на фото.", image_base64=image_b64)
     except Exception as e:
         log.error(f"ai inline groq: {e}", exc_info=True)
-        answer = "⚠️ ИИ временно недоступен — попробуй позже."
+        answer = (
+            "◆ <b>ИИ недоступен</b> — вероятно, исчерпан бесплатный лимит токенов на сегодня.\n\n"
+            "◇ Подожди немного и попробуй ещё раз.\n\n"
+            "Quiet Mod — бесплатный бот для всех.\n"
+            "Спасибо за терпение и уважение ◆"
+        )
     try:
         await _business_edit_ai_html(
             msg.business_connection_id, msg.chat.id, msg.message_id,
@@ -348,7 +353,12 @@ async def on_ai_group(msg: Message):
         answer = await groq_chat(uid, question, image_base64=image_b64)
     except Exception as e:
         log.error(f"ai group groq: {e}", exc_info=True)
-        answer = "⚠️ ИИ временно недоступен — попробуй позже."
+        answer = (
+            "◆ <b>ИИ недоступен</b> — вероятно, исчерпан бесплатный лимит токенов на сегодня.\n\n"
+            "◇ Подожди немного и попробуй ещё раз.\n\n"
+            "Quiet Mod — бесплатный бот для всех.\n"
+            "Спасибо за терпение и уважение ◆"
+        )
     try:
         await _edit_ai_html(thinking, prefix="◆ ", answer=answer)
     except Exception:

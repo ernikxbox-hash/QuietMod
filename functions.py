@@ -837,7 +837,12 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
             already_searched = True
     reply = await _groq_request(messages, model=active_model)
     if reply is None:
-        return "⚠️ ИИ временно недоступен — попробуй позже."
+        return (
+            "◆ <b>ИИ недоступен</b> — вероятно, исчерпан бесплатный лимит токенов на сегодня.\n\n"
+            "◇ Подожди немного и попробуй ещё раз.\n\n"
+            "Quiet Mod — бесплатный бот для всех.\n"
+            "Спасибо за терпение и уважение ◆"
+        )
     reply = _normalize_code_blocks(reply)
     if already_searched:
         reply += "\n\n◐ <i>ответ дополнен поиском</i>"
