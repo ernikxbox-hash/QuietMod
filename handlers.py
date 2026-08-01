@@ -211,7 +211,8 @@ async def on_mute_inline(msg: Message):
             "◇ Все его сообщения теперь удаляются\n\n"
             f"<code>{LINE}</code>\n"
             "◇ Размутить: кнопка ниже 👇\n"
-            "   или команда <code>.unmute</code>"
+            "   или команда <code>.unmute</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
         ),
         reply_markup=mute_kb,
     )
@@ -253,7 +254,8 @@ async def cb_unmute_btn(call: CallbackQuery):
             "✅ <b>MUTE ВЫКЛЮЧЕН</b>\n"
             f"<code>{LINE}</code>\n\n"
             "◇ Пользователь <b>размучен</b>\n"
-            "◇ Сообщения снова доставляются"
+            "◇ Сообщения снова доставляются\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
         ),
         reply_markup={"inline_keyboard": []},
     )
@@ -274,7 +276,23 @@ async def on_afk_inline(msg: Message):
         "note": note,
     }
     business_afk_last_reply.clear()
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ AFK включён")
+    afk_kb = {"inline_keyboard": [[{"text": "🔴 Выключить AFK", "callback_data": "unafk_btn"}]]}
+    note_line = f"\n◇ <b>Заметка:</b> {html_escape(note)}" if note else ""
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "🌙 <b>AFK ВКЛЮЧЁН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Ты <b>не в сети</b>\n"
+            "◇ Собеседникам отправляется автоответ"
+            f"{note_line}\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Выключить: кнопка ниже 👇\n"
+            "   или команда <code>.unafk</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup=afk_kb,
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.unafk$"))
 async def on_unafk_inline(msg: Message):
     if not msg.business_connection_id:
@@ -287,6 +305,36 @@ async def on_unafk_inline(msg: Message):
     business_afk.pop(msg.business_connection_id, None)
     business_afk_last_reply.clear()
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ AFK выключен")
+@dp.callback_query(F.data == "unafk_btn")
+async def cb_unafk_btn(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось выключить AFK", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "unafk_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может выключить AFK", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    if conn_id not in business_afk:
+        await call.answer("◇ AFK уже выключен", show_alert=False)
+    else:
+        business_afk.pop(conn_id, None)
+        business_afk_last_reply.clear()
+        await call.answer("✅ AFK выключен", show_alert=False)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        (
+            "🌙 <b>AFK ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Автоответ <b>выключен</b>\n"
+            "◇ Снова на связи\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.code$"))
 async def on_code_inline(msg: Message):
     if not msg.business_connection_id:
@@ -297,7 +345,20 @@ async def on_code_inline(msg: Message):
     if not msg.from_user or msg.from_user.id != owner_id:
         return
     business_code_mode.add(msg.business_connection_id)
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Code включён")
+    code_kb = {"inline_keyboard": [[{"text": "🔴 Выключить режим кода", "callback_data": "uncode_btn"}]]}
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "💻 <b>РЕЖИМ КОДА ВКЛЮЧЁН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Всё, что ты пишешь, оформляется как код\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Выключить: кнопка ниже 👇\n"
+            "   или команда <code>.uncode</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup=code_kb,
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.uncode$"))
 async def on_uncode_inline(msg: Message):
     if not msg.business_connection_id:
@@ -309,6 +370,34 @@ async def on_uncode_inline(msg: Message):
         return
     business_code_mode.discard(msg.business_connection_id)
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Code выключен")
+@dp.callback_query(F.data == "uncode_btn")
+async def cb_uncode_btn(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось выключить режим кода", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "uncode_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может выключить режим кода", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    if conn_id not in business_code_mode:
+        await call.answer("◇ Режим кода уже выключен", show_alert=False)
+    else:
+        business_code_mode.discard(conn_id)
+        await call.answer("✅ Режим кода выключен", show_alert=False)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        (
+            "💻 <b>РЕЖИМ КОДА ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Обычный режим <b>возвращён</b>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.wbl$"))
 async def on_wbl_inline(msg: Message):
     if not msg.business_connection_id:
@@ -321,7 +410,21 @@ async def on_wbl_inline(msg: Message):
     if not msg.from_user or msg.from_user.id != owner_id:
         return
     business_wbl_chats.add((msg.business_connection_id, msg.chat.id))
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Фильтр мата включён")
+    wbl_kb = {"inline_keyboard": [[{"text": "🔴 Выключить фильтр", "callback_data": "unwbl_btn"}]]}
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "🛡️ <b>ФИЛЬТР ВКЛЮЧЁН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Фильтр мата <b>включён</b>\n"
+            "◇ Мат и флуд от собеседника удаляются\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Выключить: кнопка ниже 👇\n"
+            "   или команда <code>.unwbl</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup=wbl_kb,
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.unwbl$"))
 async def on_unwbl_inline(msg: Message):
     if not msg.business_connection_id:
@@ -335,6 +438,36 @@ async def on_unwbl_inline(msg: Message):
         return
     business_wbl_chats.discard((msg.business_connection_id, msg.chat.id))
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Фильтр мата выключен")
+@dp.callback_query(F.data == "unwbl_btn")
+async def cb_unwbl_btn(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось выключить фильтр", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "unwbl_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может выключить фильтр", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    key = (conn_id, chat_id)
+    if key not in business_wbl_chats:
+        await call.answer("◇ Фильтр уже выключен", show_alert=False)
+    else:
+        business_wbl_chats.discard(key)
+        await call.answer("✅ Фильтр выключен", show_alert=False)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        (
+            "🛡️ <b>ФИЛЬТР ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Фильтр мата <b>выключен</b>\n"
+            "◇ Сообщения снова доставляются\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.ai\s+.+"))
 async def on_ai_inline(msg: Message):
     if not msg.business_connection_id:
