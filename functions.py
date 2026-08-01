@@ -198,6 +198,107 @@ MEDIA_MAP = {
     "animation":  "◆ GIF",
 }
 
+_PRICE_BASE_USD = 14
+_PRICE_RANK_PRICE = {
+    1: 1, 2: 2, 3: 4, 4: 8, 5: 15,
+    6: 30, 7: 60, 8: 120, 9: 250, 10: 500,
+}
+_PRICE_VOWELS = set("aeiouyаеёиоуыэюяAEIOUYАЕЁИОУЫЭЮЯ")
+
+def _price_is_pronounceable(username: str) -> bool:
+    letters = [c for c in username if c.isalpha()]
+    if not letters:
+        return False
+    vowels = sum(1 for c in letters if c in _PRICE_VOWELS)
+    return 1 <= vowels <= len(letters) - 1
+
+def _price_rank(username: str) -> int:
+    n = len(username)
+    if n <= 2:
+        rank = 10
+    elif n == 3:
+        rank = 9
+    elif n == 4:
+        rank = 8
+    elif n == 5:
+        rank = 6
+    elif n == 6:
+        rank = 5
+    elif n == 7:
+        rank = 3
+    else:
+        rank = 1
+    if any(c.isdigit() for c in username):
+        rank -= 2
+    if "_" in username:
+        rank -= 3
+    if not _price_is_pronounceable(username):
+        rank -= 1
+    return max(1, min(10, rank))
+
+def _price_stars(rank: int) -> str:
+    if rank >= 9:
+        return "⭐⭐⭐⭐⭐"
+    if rank >= 7:
+        return "⭐⭐⭐⭐☆"
+    if rank >= 5:
+        return "⭐⭐⭐☆☆"
+    if rank >= 3:
+        return "⭐⭐☆☆☆"
+    return "⭐☆☆☆☆"
+
+def _price_estimate(username: str) -> Optional[str]:
+    """Оценка стоимости юзернейма (эвристика в стиле Fragment)."""
+    u = (username or "").strip().lstrip("@").strip()
+    if not u or not re.fullmatch(r"[a-zA-Z0-9_]{1,32}", u):
+        return None
+    n = len(u)
+    has_digits = any(c.isdigit() for c in u)
+    has_underscore = "_" in u
+    pronounceable = _price_is_pronounceable(u)
+    rank = _price_rank(u)
+    base = _PRICE_BASE_USD * _PRICE_RANK_PRICE[rank]
+    if rank == 1:
+        low = high = _PRICE_BASE_USD
+    else:
+        low = max(_PRICE_BASE_USD, int(base * 0.9))
+        high = int(base * 1.1)
+    bars = "▰" * rank + "▱" * (10 - rank)
+    adv = []
+    if not has_digits:
+        adv.append("🔤 Без цифр")
+    if not has_underscore:
+        adv.append("✨ Без подчёркивания")
+    if pronounceable:
+        adv.append("🗣 Хорошая произносимость")
+    if n <= 4:
+        adv.append(f"📏 Короткий ({n} симв.)")
+    if not adv:
+        adv.append("—")
+    dis = []
+    if n >= 7:
+        dis.append("📐 Длинноватый (7+ символов)")
+    if has_digits:
+        dis.append("🔢 Содержит цифры")
+    if has_underscore:
+        dis.append("✨ Содержит подчёркивание")
+    if not pronounceable:
+        dis.append("🗣 Трудно произнести")
+    dis.append("❓ Нет в базе Fragment — спрос не подтверждён рынком")
+    safe = html_escape(u)
+    return (
+        "📊 Статус на Fragment\n"
+        "❌ Продаж на Fragment не обнаружено\n\n"
+        f"📈 Оценка юзернейма <a href=\"https://t.me/{safe}\">@{safe}</a> (https://t.me/{safe})\n\n"
+        f"💰 Ориентировочная стоимость: <b>${low} — ${high}</b>\n"
+        f"🏷 Стоимость создания: 10 GRAM (TON) (~${_PRICE_BASE_USD})\n"
+        f"🏆 Ранг: <code>{bars}</code> {rank}/10\n"
+        f"⭐️ Потенциал: {_price_stars(rank)}\n\n"
+        "✅ Преимущества:\n" + "\n".join(adv) + "\n\n"
+        "❌ Недостатки:\n" + "\n".join(dis) + "\n\n"
+        f"— 👁️ @{BOT_USERNAME}"
+    )
+
 def premium_badge(is_prem: bool, donor: bool) -> str:
     if donor:  return "◇"
     if is_prem: return "◈"
@@ -352,6 +453,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".unwbl — выключить",
         "note": "Защита от мата, обфускации, флуда"
     },
+    "price": {
+        "title": "◇ .price",
+        "desc": "Оценка стоимости юзернейма (как на Fragment).",
+        "usage": ".price @username",
+        "example": ".price @alimtona",
+        "note": "В бизнес-чате без аргумента — оценит собеседника"
+    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -404,7 +512,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl",
+    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "price",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):

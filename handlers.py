@@ -53,6 +53,7 @@ from functions import (
     _groq_request,
     _is_weather_query,
     _normalize_code_blocks,
+    _price_estimate,
     _reply_ai_html,
     _send_notify,
     _show_home,
@@ -703,6 +704,56 @@ async def on_search_group(msg: Message):
         except Exception as e:
             log.error(f"search_group reply: {e}")
     log.info(f"🔍 .search group chat={msg.chat.id} user={uid} query={query[:50]}")
+@dp.business_message(F.text.regexp(r"(?i)^\.price(\s+.+)?$"))
+async def on_price_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".price")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    raw_text = (msg.text or "").strip()
+    body = raw_text[6:].strip() if len(raw_text) >= 6 else ""
+    target = body.lstrip("@").strip() if body else ""
+    if not target:
+        target = (getattr(msg.chat, "username", "") or "").strip()
+    if not target:
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            "◇ <b>.price</b> — не удалось определить юзернейм.\n◇ Укажи явно: <code>.price @username</code>",
+        )
+        return
+    estimate = _price_estimate(target)
+    if estimate is None:
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            "◇ <b>.price</b> — некорректный юзернейм. Формат: <code>.price @username</code>",
+        )
+        return
+    await _business_edit_ai_html(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        prefix="", answer=estimate,
+    )
+    log.info(f"💰 .price business owner={owner_id} target=@{target}")
+@dp.message(F.text.regexp(r"(?i)^\.price(\s+.+)?$"), F.chat.type.in_({"group", "supergroup", "channel"}))
+async def on_price_group(msg: Message):
+    if not msg.from_user:
+        return
+    raw_text = msg.text or ""
+    body = raw_text[6:].strip() if len(raw_text) >= 6 else ""
+    target = body.lstrip("@").strip()
+    if not target:
+        await msg.reply("◇ <b>.price</b> — укажи юзернейм: <code>.price @username</code>")
+        return
+    await db.upsert_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name or "")
+    await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
+    estimate = _price_estimate(target)
+    if estimate is None:
+        await msg.reply("◇ <b>.price</b> — некорректный юзернейм. Формат: <code>.price @username</code>")
+        return
+    await _reply_ai_html(msg, prefix="", answer=estimate)
+    log.info(f"💰 .price group chat={msg.chat.id} target=@{target}")
 FORMAT_CMDS: dict[str, tuple[str, str]] = {
     "bold":    ("<b>", "</b>"),
     "italic":  ("<i>", "</i>"),
@@ -809,7 +860,7 @@ async def on_spam(msg: Message):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
