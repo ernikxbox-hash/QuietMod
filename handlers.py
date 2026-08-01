@@ -19,7 +19,6 @@ from aiogram.types import (
     BusinessMessagesDeleted,
     CallbackQuery,
     ChatMemberUpdated,
-    FSInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     LabeledPrice,
@@ -48,21 +47,15 @@ from functions import (
     _ddg_search,
     _edit_ai_html,
     _extract_city,
-    _find_local_media,
     _fmt_duration_ru,
     _get_image_base64,
-    _get_media_meta,
     _get_weather,
     _groq_request,
     _is_weather_query,
-    _media_ext_for_msg,
     _normalize_code_blocks,
-    _remove_local_media,
     _reply_ai_html,
-    _save_media_to_disk,
     _send_notify,
     _show_home,
-    _store_media_meta,
 )
 from business_api import (
     _business_delete_message_ex,
@@ -657,7 +650,7 @@ async def on_business_msg(msg: Message):
             media_type = label
             file_id = obj[-1].file_id if attr == "photo" else (getattr(obj, "file_id", None))
             break
-    msg_meta = {
+    await db.save_message(owner_id, {
         "msg_id":     msg.message_id,
         "sender_id":  msg.from_user.id if msg.from_user else None,
         "from_name":  msg.from_user.full_name if msg.from_user else "Неизвестно",
@@ -667,15 +660,7 @@ async def on_business_msg(msg: Message):
         "text":       msg.text or msg.caption or "",
         "media_type": media_type,
         "file_id":    file_id,
-    }
-    await db.save_message(owner_id, msg_meta)
-    if file_id and msg.from_user and msg.from_user.id != owner_id:
-        _store_media_meta(owner_id, msg.message_id, msg_meta)
-        try:
-            ext = _media_ext_for_msg(msg)
-            await _save_media_to_disk(bot, owner_id, msg.message_id, file_id, ext)
-        except Exception as e:
-            log.warning(f"media pre-save: {e}")
+    })
     cid = msg.chat.id
     chat_msg_ids.setdefault(cid, [])
     if msg.message_id not in chat_msg_ids[cid]:
@@ -751,49 +736,38 @@ async def on_edited_business_msg(msg: Message):
         "file_id":    file_id,
     })
     log.debug(f"✏️ updated msg={msg.message_id} owner={owner_id} bot_edit={is_bot_edit}")
-async def _transcribe_voice(file_id: str, local_path: Optional[str] = None) -> Optional[str]:
-    audio_bytes: Optional[bytes] = None
-    if local_path:
-        try:
-            with open(local_path, "rb") as f:
-                audio_bytes = f.read()
-        except Exception as e:
-            log.warning(f"Whisper read local: {e}")
-    if audio_bytes is None:
-        try:
-            file = await bot.get_file(file_id)
-            url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status != 200:
-                        return None
-                    audio_bytes = await resp.read()
-        except Exception as e:
-            log.warning(f"Whisper transcribe: {e}")
-            return None
-    if not audio_bytes:
-        return None
-    import io
-    for api_key in GROQ_API_KEYS:
-        try:
-            form = aiohttp.FormData()
-            form.add_field("file", io.BytesIO(audio_bytes), filename="voice.ogg", content_type="audio/ogg")
-            form.add_field("model", "whisper-large-v3")
-            form.add_field("response_format", "text")
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    data=form,
-                    timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    if resp.status == 200:
-                        await db.record_stat("whisper_ok")
-                        return (await resp.text()).strip()
-                    log.warning(f"Whisper key failed (status={resp.status}) — пробую следующий ключ")
-        except Exception as e:
-            log.warning(f"Whisper transcribe (key attempt): {e}")
-    await db.record_stat("whisper_fail")
+async def _transcribe_voice(file_id: str) -> Optional[str]:
+    try:
+        file = await bot.get_file(file_id)
+        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                if resp.status != 200:
+                    return None
+                audio_bytes = await resp.read()
+        import io
+        for api_key in GROQ_API_KEYS:
+            try:
+                form = aiohttp.FormData()
+                form.add_field("file", io.BytesIO(audio_bytes), filename="voice.ogg", content_type="audio/ogg")
+                form.add_field("model", "whisper-large-v3")
+                form.add_field("response_format", "text")
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        data=form,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as resp:
+                        if resp.status == 200:
+                            await db.record_stat("whisper_ok")
+                            return (await resp.text()).strip()
+                        log.warning(f"Whisper key failed (status={resp.status}) — пробую следующий ключ")
+            except Exception as e:
+                log.warning(f"Whisper transcribe (key attempt): {e}")
+        await db.record_stat("whisper_fail")
+    except Exception as e:
+        log.warning(f"Whisper transcribe: {e}")
     return None
 async def _send_media(owner_id: int, file_id: str, mt: str):
     try:
@@ -801,26 +775,11 @@ async def _send_media(owner_id: int, file_id: str, mt: str):
         elif "Видео"   in mt: await bot.send_video(owner_id, file_id)
         elif "Голос"   in mt: await bot.send_voice(owner_id, file_id)
         elif "Кружок"  in mt: await bot.send_video_note(owner_id, file_id)
-        elif "Аудио"   in mt: await bot.send_audio(owner_id, file_id)
         elif "Документ" in mt: await bot.send_document(owner_id, file_id)
         elif "GIF"     in mt: await bot.send_animation(owner_id, file_id)
         elif "Стикер"  in mt: await bot.send_sticker(owner_id, file_id)
     except Exception as e:
         log.warning(f"Media send: {e}")
-async def _send_media_local(owner_id: int, path: str, mt: str):
-    """Отправляет медиа владельцу из локального файла (для самоуничтожающихся)."""
-    try:
-        media = FSInputFile(path)
-        if "Фото"      in mt: await bot.send_photo(owner_id, media)
-        elif "Видео"   in mt: await bot.send_video(owner_id, media)
-        elif "Голос"   in mt: await bot.send_voice(owner_id, media)
-        elif "Кружок"  in mt: await bot.send_video_note(owner_id, media)
-        elif "Аудио"   in mt: await bot.send_audio(owner_id, media)
-        elif "Документ" in mt: await bot.send_document(owner_id, media)
-        elif "GIF"     in mt: await bot.send_animation(owner_id, media)
-        elif "Стикер"  in mt: await bot.send_sticker(owner_id, media)
-    except Exception as e:
-        log.warning(f"Media send local: {e}")
 @dp.deleted_business_messages()
 async def on_deleted(event: BusinessMessagesDeleted):
     log.debug(f"🚨 deleted conn={event.business_connection_id} ids={event.message_ids}")
@@ -829,8 +788,6 @@ async def on_deleted(event: BusinessMessagesDeleted):
         return
     for msg_id in event.message_ids:
         cached = await db.get_message(owner_id, msg_id)
-        if not cached:
-            cached = _get_media_meta(owner_id, msg_id)
         if not cached:
             log.info(f"❓ msg={msg_id} not in cache for owner={owner_id} — skip, nothing to show")
             continue
@@ -866,14 +823,9 @@ async def on_deleted(event: BusinessMessagesDeleted):
         if sent_id is None:
             continue
         if cached["file_id"]:
-            local_path = _find_local_media(owner_id, msg_id)
-            if local_path:
-                await _send_media_local(owner_id, local_path, cached["media_type"])
-            else:
-                log.warning(f"🧩 media file missing for owner={owner_id} msg={msg_id} — fallback to file_id")
-                await _send_media(owner_id, cached["file_id"], cached["media_type"])
+            await _send_media(owner_id, cached["file_id"], cached["media_type"])
             if "Голос" in cached["media_type"] and cached["file_id"]:
-                transcript = await _transcribe_voice(cached["file_id"], local_path=local_path)
+                transcript = await _transcribe_voice(cached["file_id"])
                 if transcript:
                     try:
                         await bot.send_message(
@@ -1003,11 +955,7 @@ async def cb_save_forever(call: CallbackQuery):
     try:
         await bot.send_message(uid, save_text)
         if cached["file_id"]:
-            local_path = _find_local_media(uid, msg_id)
-            if local_path:
-                await _send_media_local(uid, local_path, cached["media_type"])
-            else:
-                await _send_media(uid, cached["file_id"], cached["media_type"])
+            await _send_media(uid, cached["file_id"], cached["media_type"])
         await call.answer("◆ Сохранено в архиве!", show_alert=False)
         new_kb = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -1230,11 +1178,7 @@ async def cb_stats(call: CallbackQuery):
     )
 @dp.callback_query(F.data == "clear_cache")
 async def cb_clear(call: CallbackQuery):
-    uid = call.from_user.id
-    msgs = await db.get_recent_messages(uid, 1000)
-    for m in msgs:
-        _remove_local_media(uid, m["msg_id"])
-    count = await db.clear_messages(uid)
+    count = await db.clear_messages(call.from_user.id)
     await call.answer(f"✕ Удалено {count} записей", show_alert=True)
 @dp.callback_query(F.data == "show_all")
 async def cb_show_all(call: CallbackQuery):
@@ -1273,7 +1217,6 @@ async def cb_del(call: CallbackQuery):
     uid     = call.from_user.id
     is_prem = await db.is_premium(uid)
     await db.delete_message(uid, msg_id)
-    _remove_local_media(uid, msg_id)
     await call.answer("✕ Удалено из архива")
     await call.message.edit_text(
         home_text(is_prem),
