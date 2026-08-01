@@ -351,10 +351,60 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".unwbl — выключить",
         "note": "Защита от мата, обфускации, флуда"
     },
+    "bold": {
+        "title": "◆ .bold",
+        "desc": "Жирный шрифт — выдели текст жирным.",
+        "usage": ".bold текст",
+        "example": ".bold важное сообщение",
+        "note": "Работает в группах и личных чатах (Business)"
+    },
+    "italic": {
+        "title": "◆ .italic",
+        "desc": "Курсив — наклонный текст.",
+        "usage": ".italic текст",
+        "example": ".italic нежный акцент",
+        "note": "Работает в группах и личных чатах (Business)"
+    },
+    "mono": {
+        "title": "◆ .mono",
+        "desc": "Моноширинный шрифт — как код.",
+        "usage": ".mono текст",
+        "example": ".mono print('hello')",
+        "note": "Работает в группах и личных чатах (Business)"
+    },
+    "line": {
+        "title": "◆ .line",
+        "desc": "Подчёркнутый текст.",
+        "usage": ".line текст",
+        "example": ".line подчёркнуто",
+        "note": "Работает в группах и личных чатах (Business)"
+    },
+    "crossed": {
+        "title": "◆ .crossed",
+        "desc": "Зачёркнутый текст.",
+        "usage": ".crossed текст",
+        "example": ".crossed старый вариант",
+        "note": "Работает в группах и личных чатах (Business)"
+    },
+    "hidden": {
+        "title": "◆ .hidden",
+        "desc": "Скрытый текст — спойлер, виден по тапу.",
+        "usage": ".hidden текст",
+        "example": ".hidden ответ на загадку",
+        "note": "Работает в группах и личных чатах (Business)"
+    },
+    "quote": {
+        "title": "◆ .quote",
+        "desc": "Цитата — текст в блоке цитирования.",
+        "usage": ".quote текст",
+        "example": ".quote знание — сила",
+        "note": "Работает в группах и личных чатах (Business)"
+    },
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl"]
+    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl",
+                "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]

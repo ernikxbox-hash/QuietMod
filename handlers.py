@@ -469,6 +469,57 @@ async def on_search_group(msg: Message):
         except Exception as e:
             log.error(f"search_group reply: {e}")
     log.info(f"🔍 .search group chat={msg.chat.id} user={uid} query={query[:50]}")
+FORMAT_CMDS: dict[str, tuple[str, str]] = {
+    "bold":    ("<b>", "</b>"),
+    "italic":  ("<i>", "</i>"),
+    "mono":    ("<code>", "</code>"),
+    "line":    ("<u>", "</u>"),
+    "crossed": ("<s>", "</s>"),
+    "hidden":  ("<tg-spoiler>", "</tg-spoiler>"),
+    "quote":   ("<blockquote>", "</blockquote>"),
+}
+FORMAT_CMD_RE = r"(?is)^\.(bold|italic|mono|line|crossed|hidden|quote)\s+(.+)$"
+def _format_inline_cmd(text: str) -> Optional[tuple[str, str]]:
+    m = re.match(FORMAT_CMD_RE, text or "")
+    if not m:
+        return None
+    cmd = m.group(1).lower()
+    content = m.group(2).strip()
+    if not content:
+        return None
+    open_tag, close_tag = FORMAT_CMDS[cmd]
+    return cmd, f"{open_tag}{html_escape(content)}{close_tag}"
+@dp.business_message(F.text.regexp(FORMAT_CMD_RE))
+async def on_format_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, "format")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    parsed = _format_inline_cmd(msg.text or msg.caption or "")
+    if not parsed:
+        return
+    cmd, formatted = parsed
+    ok = await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id, formatted
+    )
+    log.info(f"✏️ .{cmd} business chat={msg.chat.id} owner={owner_id} ok={ok}")
+@dp.message(F.text.regexp(FORMAT_CMD_RE), F.chat.type.in_({"group", "supergroup", "channel"}))
+async def on_format_group(msg: Message):
+    if not msg.from_user:
+        return
+    parsed = _format_inline_cmd(msg.text or msg.caption or "")
+    if not parsed:
+        return
+    cmd, formatted = parsed
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    await msg.answer(formatted)
+    log.info(f"✏️ .{cmd} group chat={msg.chat.id} user={msg.from_user.id}")
 async def _spam_worker(chat_id: int, uid: int, text: str, count: int):
     key = (chat_id, uid)
     try:
@@ -524,7 +575,7 @@ async def on_spam(msg: Message):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
