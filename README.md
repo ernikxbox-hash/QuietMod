@@ -35,6 +35,7 @@ git push -u origin main
 | `BOT_TOKEN` | токен от @BotFather |
 | `ADMIN_ID` | твой Telegram ID |
 | `GROQ_API_KEY` | ключ от [console.groq.com](https://console.groq.com) |
+| `GROQ_API_KEY2` | второй ключ от Groq (запасной, необязательно) — если на первом лимит/ошибка, бот переключится на второй |
 | `BOT_USERNAME` | `Quiet_Mod_bot` (без @) |
 
 4. Volumes → Add Volume → Mount path: `/app/data`

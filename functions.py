@@ -32,7 +32,7 @@ from core import (
     BOT_USERNAME,
     BRAND_NAME,
     DONOR_BADGE_MIN,
-    GROQ_API_KEY,
+    GROQ_API_KEYS,
     GROQ_MODEL,
     GROQ_MODEL_TEXT,
     PREMIUM_MONTHLY_STARS,
@@ -52,6 +52,7 @@ business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
 MAX_MSG_CACHE = 200
+_GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
 PROFANITY_RE = re.compile(
     r"(?iu)\b("
     r"хуй|хуе|хуя|хуи|хуё|хуйн|хуесос|хер|херн|"
@@ -731,7 +732,12 @@ def _sanitize_vision_messages(messages: list) -> list:
 
 
 async def _groq_request(messages: list, max_tokens: int = 2048, temperature: float = 0.7, model: str = GROQ_MODEL) -> Optional[str]:
-    """Отправка запроса в Groq с гарантией корректного формата messages.
+    """Отправка запроса в Groq с фолбэком между API-ключами.
+
+    Если ключ не отвечает (лимит токенов, ошибка, таймаут) — бот
+    автоматически пробует следующий ключ из GROQ_API_KEYS.
+    Каждый следующий запрос начинается с последнего рабочего ключа.
+    Модель у всех ключей одна и та же (параметр model).
 
     Перед отправкой история приводится к формату выбранной модели:
     — vision-модель (GROQ_MODEL): строки и списки частей image_url/text;
@@ -747,44 +753,61 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=45),
-            ) as resp:
-                import json as _json
-                raw = await resp.text()
-                try:
-                    data = _json.loads(raw)
-                except Exception:
-                    log.error(
-                        f"Groq non-JSON response (model={model}, status={resp.status}, "
-                        f"body={raw[:1000]})",
-                        exc_info=True,
-                    )
-                    return None
-                if "choices" not in data:
-                    log.error(
-                        f"Groq unexpected response (model={model}, status={resp.status}, "
-                        f"body={_json.dumps(data, ensure_ascii=False)})"
-                    )
-                    return None
-                return data["choices"][0]["message"]["content"].strip()
-    except asyncio.TimeoutError:
-        log.warning(f"Groq request timeout (model={model})")
+    global _GROQ_KEY_INDEX
+    keys = GROQ_API_KEYS
+    n = len(keys)
+    if n == 0:
+        log.error("Groq: нет ни одного API-ключа (GROQ_API_KEY / GROQ_API_KEY2)")
         return None
-    except aiohttp.ClientError as e:
-        log.error(f"Groq HTTP request failed (model={model}): {e!r}", exc_info=True)
-        return None
-    except Exception as e:
-        log.error(f"Groq request failed (model={model}): {e!r}", exc_info=True)
-        return None
+    start = _GROQ_KEY_INDEX % n
+    for i in range(n):
+        idx = (start + i) % n
+        api_key = keys[idx]
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=45),
+                ) as resp:
+                    import json as _json
+                    raw = await resp.text()
+                    try:
+                        data = _json.loads(raw)
+                    except Exception:
+                        log.error(
+                            f"Groq non-JSON response (key={idx + 1}/{n}, model={model}, "
+                            f"status={resp.status}, body={raw[:300]})",
+                            exc_info=True,
+                        )
+                        continue
+                    if resp.status != 200:
+                        err = data.get("error") if isinstance(data, dict) else data
+                        log.warning(
+                            f"Groq key {idx + 1}/{n} failed (model={model}, status={resp.status}): "
+                            f"{_json.dumps(err, ensure_ascii=False)[:200]} — пробую следующий ключ"
+                        )
+                        continue
+                    if "choices" not in data:
+                        log.error(
+                            f"Groq unexpected response (key={idx + 1}/{n}, model={model}, "
+                            f"status={resp.status}, body={_json.dumps(data, ensure_ascii=False)[:300]})"
+                        )
+                        continue
+                    _GROQ_KEY_INDEX = idx
+                    return data["choices"][0]["message"]["content"].strip()
+        except asyncio.TimeoutError:
+            log.warning(f"Groq request timeout (key={idx + 1}/{n}, model={model}) — пробую следующий ключ")
+        except aiohttp.ClientError as e:
+            log.error(f"Groq HTTP request failed (key={idx + 1}/{n}, model={model}): {e!r}")
+        except Exception as e:
+            log.error(f"Groq request failed (key={idx + 1}/{n}, model={model}): {e!r}")
+    log.error(f"Groq: все {n} API-ключей не сработали (model={model})")
+    return None
 def _normalize_code_blocks(text: str) -> str:
     text = re.sub(
         r"```(?:\w+)?\n?(.*?)```",

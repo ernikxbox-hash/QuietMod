@@ -32,6 +32,7 @@ from core import (
     ADMIN_ID,
     BRAND_NAME,
     DONOR_BADGE_MIN,
+    GROQ_API_KEYS,
     PREMIUM_MONTHLY_STARS,
     S,
     bot,
@@ -744,19 +745,24 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
                     return None
                 audio_bytes = await resp.read()
         import io
-        form = aiohttp.FormData()
-        form.add_field("file", io.BytesIO(audio_bytes), filename="voice.ogg", content_type="audio/ogg")
-        form.add_field("model", "whisper-large-v3")
-        form.add_field("response_format", "text")
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.groq.com/openai/v1/audio/transcriptions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-                data=form,
-                timeout=aiohttp.ClientTimeout(total=30),
-            ) as resp:
-                if resp.status == 200:
-                    return (await resp.text()).strip()
+        for api_key in GROQ_API_KEYS:
+            try:
+                form = aiohttp.FormData()
+                form.add_field("file", io.BytesIO(audio_bytes), filename="voice.ogg", content_type="audio/ogg")
+                form.add_field("model", "whisper-large-v3")
+                form.add_field("response_format", "text")
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        data=form,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as resp:
+                        if resp.status == 200:
+                            return (await resp.text()).strip()
+                        log.warning(f"Whisper key failed (status={resp.status}) — пробую следующий ключ")
+            except Exception as e:
+                log.warning(f"Whisper transcribe (key attempt): {e}")
     except Exception as e:
         log.warning(f"Whisper transcribe: {e}")
     return None
