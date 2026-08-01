@@ -1,7 +1,7 @@
 import aiohttp
 from core import BOT_TOKEN, log
 
-async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, text: str) -> tuple[bool, str | None]:
+async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, text: str, reply_markup=None) -> tuple[bool, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
     payload = {
         "business_connection_id": conn_id,
@@ -10,6 +10,8 @@ async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, tex
         "text": text,
         "parse_mode": "HTML",
     }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -22,8 +24,8 @@ async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, tex
     except Exception as e:
         log.warning(f"editMessageText HTTP: {e}")
         return False, str(e)
-async def _business_edit_message(conn_id: str, chat_id: int, msg_id: int, text: str) -> bool:
-    ok, _ = await _business_edit_message_ex(conn_id, chat_id, msg_id, text)
+async def _business_edit_message(conn_id: str, chat_id: int, msg_id: int, text: str, reply_markup=None) -> bool:
+    ok, _ = await _business_edit_message_ex(conn_id, chat_id, msg_id, text, reply_markup=reply_markup)
     return ok
 async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tuple[bool, int | None, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"

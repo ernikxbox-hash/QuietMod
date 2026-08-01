@@ -201,7 +201,20 @@ async def on_mute_inline(msg: Message):
     if not msg.from_user or msg.from_user.id != owner_id:
         return
     business_muted_chats.add((msg.business_connection_id, msg.chat.id))
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Пользователь замучен если надо размутить напишите .unmute")
+    mute_kb = {"inline_keyboard": [[{"text": "🔴 Размутить", "callback_data": "unmute_btn"}]]}
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "🔇 <b>MUTE ВКЛЮЧЁН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Пользователь <b>замучен</b>\n"
+            "◇ Все его сообщения теперь удаляются\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Размутить: кнопка ниже 👇\n"
+            "   или команда <code>.unmute</code>"
+        ),
+        reply_markup=mute_kb,
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.unmute$"))
 async def on_unmute_inline(msg: Message):
     if not msg.business_connection_id:
@@ -215,6 +228,35 @@ async def on_unmute_inline(msg: Message):
         return
     business_muted_chats.discard((msg.business_connection_id, msg.chat.id))
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Mute выключен")
+@dp.callback_query(F.data == "unmute_btn")
+async def cb_unmute_btn(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось размутить", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "unmute_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может размутить", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    key = (conn_id, chat_id)
+    if key not in business_muted_chats:
+        await call.answer("◇ Уже размучен", show_alert=False)
+    else:
+        business_muted_chats.discard(key)
+        await call.answer("✅ Пользователь размучен", show_alert=False)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        (
+            "✅ <b>MUTE ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Пользователь <b>размучен</b>\n"
+            "◇ Сообщения снова доставляются"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.afk(\s+.*)?$"))
 async def on_afk_inline(msg: Message):
     if not msg.business_connection_id:
