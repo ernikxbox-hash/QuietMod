@@ -201,7 +201,7 @@ async def on_mute_inline(msg: Message):
     if not msg.from_user or msg.from_user.id != owner_id:
         return
     business_muted_chats.add((msg.business_connection_id, msg.chat.id))
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Mute включён")
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Пользователь замучен если надо размутить напишите .unmute")
 @dp.business_message(F.text.regexp(r"(?i)^\.unmute$"))
 async def on_unmute_inline(msg: Message):
     if not msg.business_connection_id:
