@@ -714,6 +714,7 @@ async def on_edited_business_msg(msg: Message):
             "event_type": "edited",
             "old_text":   old_text,
         })
+        await db.record_stat("caught_edited")
         await _send_notify(owner_id, notify, reply_markup=kb_notify(save_id))
     media_type = "◆ Текст"
     file_id: Optional[str] = None
@@ -759,10 +760,12 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
                         timeout=aiohttp.ClientTimeout(total=30),
                     ) as resp:
                         if resp.status == 200:
+                            await db.record_stat("whisper_ok")
                             return (await resp.text()).strip()
                         log.warning(f"Whisper key failed (status={resp.status}) — пробую следующий ключ")
             except Exception as e:
                 log.warning(f"Whisper transcribe (key attempt): {e}")
+        await db.record_stat("whisper_fail")
     except Exception as e:
         log.warning(f"Whisper transcribe: {e}")
     return None
@@ -815,6 +818,7 @@ async def on_deleted(event: BusinessMessagesDeleted):
             "event_type": "deleted",
             "old_text":   None,
         })
+        await db.record_stat("caught_deleted")
         sent_id = await _send_notify(owner_id, text, reply_markup=kb_notify(save_id))
         if sent_id is None:
             continue
@@ -1365,21 +1369,66 @@ async def cb_adm_users_page(call: CallbackQuery):
     await call.answer()
     text, kb = await _render_users_page(page)
     await call.message.edit_text(text, reply_markup=kb)
+def _stat_since(days: int = 0) -> str:
+    """Начало периода в UTC (naive ISO): days=0 — с начала сегодняшнего дня по МСК."""
+    now_msk = datetime.now(MSK)
+    start = now_msk.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=days)
+    return start.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
 @dp.callback_query(F.data == "adm_stats")
 async def cb_adm_stats(call: CallbackQuery):
     if not _is_admin(call): return
-    users   = await db.count_users()
-    msgs    = await db.total_messages_all()
-    stars   = await db.total_stars()
-    ideas   = await db.count_ideas()
     await call.answer()
-    await call.message.edit_text(
-        f"◆ <b>Общая статистика</b>\n{LINE}\n"
+    today = _stat_since(0)
+    week  = _stat_since(6)
+    month = _stat_since(29)
+    async def _cnt(ev: str, since: str) -> int:
+        return await db.count_stats(ev, since)
+    launches = (
+        await _cnt("launch", today),
+        await _cnt("launch", week),
+        await _cnt("launch", month),
+        await db.count_stats("launch"),
+    )
+    users = await db.count_users()
+    msgs  = await db.total_messages_all()
+    stars = await db.total_stars()
+    ideas = await db.count_ideas()
+    del_caught = await db.count_stats("caught_deleted")
+    ed_caught  = await db.count_stats("caught_edited")
+    whisper    = await db.count_stats("whisper_ok")
+    key_lines = []
+    ok_total = 0
+    for i, _k in enumerate(GROQ_API_KEYS, start=1):
+        ok_a   = await db.count_stats(f"groq_key{i}_ok")
+        ok_t   = await _cnt(f"groq_key{i}_ok", today)
+        fail_a = await db.count_stats(f"groq_key{i}_fail")
+        ok_total += ok_a
+        key_lines.append(
+            f"   🔑 Ключ {i}: <b>{ok_a}</b> ok (сегодня {ok_t}) · ошибок <b>{fail_a}</b>"
+        )
+    if not key_lines:
+        key_lines = ["   — ключи не настроены —"]
+    text = (
+        f"◆ <b>Статистика бота</b>\n{LINE}\n"
+        f"🚀 Запуски:  сегодня <b>{launches[0]}</b> · 7д <b>{launches[1]}</b> · "
+        f"30д <b>{launches[2]}</b> · всего <b>{launches[3]}</b>\n"
+        f"{LINE}\n"
+        f"🤖 <b>Groq API</b> (успешных ответов: <b>{ok_total}</b>)\n"
+        + "\n".join(key_lines)
+        + f"\n{LINE}\n"
+        f"✕ Перехвачено удалённых:   <b>{del_caught}</b>\n"
+        f"✦ Перехвачено изменённых:  <b>{ed_caught}</b>\n"
+        f"🎤 Расшифровок голосовых:  <b>{whisper}</b>\n"
+        f"{LINE}\n"
         f"◇ Пользователей:  <b>{users}</b>\n"
         f"◇ Записей в БД:   <b>{msgs}</b>\n"
         f"⭐ Всего звёзд:    <b>{stars}</b>\n"
-        f"✦ Предложений:    <b>{ideas}</b>",
+        f"✦ Предложений:    <b>{ideas}</b>"
+    )
+    await call.message.edit_text(
+        text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_stats")],
             [InlineKeyboardButton(text="← Назад", callback_data="adm")],
         ]),
     )

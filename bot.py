@@ -25,6 +25,8 @@ async def _sync_bot_chats():
 async def main():
     await db.init_db()
     await db.purge_expired_saved()
+    await db.record_stat("launch")
+    log.info("📊 Статистика: запуск зафиксирован")
     await _sync_bot_chats()
     log.info("🚀 Quiet Mod 👁️ запускается...")
     try:

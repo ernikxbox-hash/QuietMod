@@ -1,7 +1,7 @@
 import asyncio
 import aiosqlite
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from typing import Optional
 
 DB_PATH = "data/bot.db"
@@ -16,6 +16,10 @@ _OWNER_LIMIT_TTL_SECONDS = 5 * 60
 _MSG_BATCH_MAX = 60
 _MSG_BATCH_WAIT_SECONDS = 0.25
 _OWNER_CLEANUP_EVERY = 25
+_STATS_BATCH_MAX = 100
+_STATS_BATCH_WAIT_SECONDS = 0.5
+_stats_write_queue: Optional[asyncio.Queue] = None
+_stats_writer_task: Optional[asyncio.Task] = None
 
 def _ensure_msg_writer_started():
     global _msg_write_queue, _msg_writer_task
@@ -23,6 +27,34 @@ def _ensure_msg_writer_started():
         _msg_write_queue = asyncio.Queue(maxsize=4000)
     if _msg_writer_task is None or _msg_writer_task.done():
         _msg_writer_task = asyncio.create_task(_msg_writer_loop())
+def _ensure_stats_writer_started():
+    global _stats_write_queue, _stats_writer_task
+    if _stats_write_queue is None:
+        _stats_write_queue = asyncio.Queue(maxsize=5000)
+    if _stats_writer_task is None or _stats_writer_task.done():
+        _stats_writer_task = asyncio.create_task(_stats_writer_loop())
+async def _stats_writer_loop():
+    while True:
+        item = await _stats_write_queue.get()
+        batch = [item]
+        deadline = asyncio.get_running_loop().time() + _STATS_BATCH_WAIT_SECONDS
+        while len(batch) < _STATS_BATCH_MAX:
+            now = asyncio.get_running_loop().time()
+            if now >= deadline:
+                break
+            try:
+                batch.append(_stats_write_queue.get_nowait())
+            except asyncio.QueueEmpty:
+                await asyncio.sleep(0)
+                break
+        conn = _get_conn()
+        now_iso = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+        async with _write_lock:
+            await conn.executemany(
+                "INSERT INTO bot_stats (event_type, detail, created_at) VALUES (?,?,?)",
+                [(ev, det, now_iso) for ev, det in batch],
+            )
+            await conn.commit()
 
 def _get_conn() -> aiosqlite.Connection:
     if _conn is None:
@@ -109,6 +141,15 @@ async def init_db():
         chat_type   TEXT NOT NULL,
         added_at    TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS bot_stats (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_type  TEXT NOT NULL,
+        detail      TEXT,
+        created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_stats_type ON bot_stats(event_type);
+    CREATE INDEX IF NOT EXISTS idx_stats_created ON bot_stats(created_at);
     """)
     await _conn.commit()
     try:
@@ -118,10 +159,12 @@ async def init_db():
     except Exception:
         pass
     _ensure_msg_writer_started()
+    _ensure_stats_writer_started()
     log.info("✅ DB инициализирована")
 async def close_db():
     global _conn
     global _msg_writer_task, _msg_write_queue
+    global _stats_writer_task, _stats_write_queue
     if _msg_writer_task is not None:
         _msg_writer_task.cancel()
         try:
@@ -132,6 +175,16 @@ async def close_db():
             pass
         _msg_writer_task = None
     _msg_write_queue = None
+    if _stats_writer_task is not None:
+        _stats_writer_task.cancel()
+        try:
+            await _stats_writer_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        _stats_writer_task = None
+    _stats_write_queue = None
     if _conn is not None:
         await _conn.close()
         _conn = None
@@ -423,3 +476,22 @@ async def purge_expired_saved():
     async with _write_lock:
         await conn.execute("DELETE FROM saved_messages WHERE expires_at <= ?", (now,))
         await conn.commit()
+async def record_stat(event_type: str, detail: str = ""):
+    """Асинхронно записывает событие в bot_stats (через батчер)."""
+    _get_conn()
+    _ensure_stats_writer_started()
+    await _stats_write_queue.put((event_type, detail))
+async def count_stats(event_type: str, since_iso: Optional[str] = None) -> int:
+    """Кол-во событий типа event_type; since_iso — ISO-строка начала периода (включительно)."""
+    conn = _get_conn()
+    if since_iso is None:
+        async with conn.execute(
+            "SELECT COUNT(*) FROM bot_stats WHERE event_type=?", (event_type,)
+        ) as cur:
+            return (await cur.fetchone())[0]
+    async with conn.execute(
+        "SELECT COUNT(*) FROM bot_stats WHERE event_type=? AND created_at >= ?",
+        (event_type, since_iso),
+    ) as cur:
+        return (await cur.fetchone())[0]
+

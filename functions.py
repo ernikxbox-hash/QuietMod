@@ -791,6 +791,7 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
                             f"Groq key {idx + 1}/{n} failed (model={model}, status={resp.status}): "
                             f"{_json.dumps(err, ensure_ascii=False)[:200]} — пробую следующий ключ"
                         )
+                        await db.record_stat(f"groq_key{idx + 1}_fail", f"status={resp.status}")
                         continue
                     if "choices" not in data:
                         log.error(
@@ -799,13 +800,17 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
                         )
                         continue
                     _GROQ_KEY_INDEX = idx
+                    await db.record_stat(f"groq_key{idx + 1}_ok", model)
                     return data["choices"][0]["message"]["content"].strip()
         except asyncio.TimeoutError:
             log.warning(f"Groq request timeout (key={idx + 1}/{n}, model={model}) — пробую следующий ключ")
+            await db.record_stat(f"groq_key{idx + 1}_fail", "timeout")
         except aiohttp.ClientError as e:
             log.error(f"Groq HTTP request failed (key={idx + 1}/{n}, model={model}): {e!r}")
+            await db.record_stat(f"groq_key{idx + 1}_fail", "http_error")
         except Exception as e:
             log.error(f"Groq request failed (key={idx + 1}/{n}, model={model}): {e!r}")
+            await db.record_stat(f"groq_key{idx + 1}_fail", "error")
     log.error(f"Groq: все {n} API-ключей не сработали (model={model})")
     return None
 def _normalize_code_blocks(text: str) -> str:
