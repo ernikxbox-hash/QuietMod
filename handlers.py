@@ -183,12 +183,70 @@ async def on_spam_inline(msg: Message):
         return
     existing = business_spam_tasks.get(key)
     if existing and not existing.done():
-        await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Спам уже идёт. Остановить: .spam stop")
+        stop_kb = {"inline_keyboard": [[{"text": "⛔ Остановить спам", "callback_data": "spam_stop_btn"}]]}
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            (
+                "🔊 <b>СПАМ УЖЕ ИДЁТ</b>\n"
+                f"<code>{LINE}</code>\n\n"
+                "◇ Рассылка уже запущена\n\n"
+                f"<code>{LINE}</code>\n"
+                "◇ Остановить: кнопка ниже 👇\n"
+                "   или команда <code>.spam stop</code>\n\n"
+                f"— 👁️ @{BOT_USERNAME}"
+            ),
+            reply_markup=stop_kb,
+        )
         return
     business_spam_tasks[key] = asyncio.create_task(
         _business_spam_worker(msg.business_connection_id, msg.chat.id, owner_id, text_part, count)
     )
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, f"◇ Запустил спам: {count}")
+    spam_kb = {"inline_keyboard": [[{"text": "⛔ Остановить спам", "callback_data": "spam_stop_btn"}]]}
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "🔊 <b>СПАМ ЗАПУЩЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            f"◇ Отправляю: <b>{count}</b> сообщений\n"
+            f"◇ Текст: <i>{html_escape(text_part[:80])}</i>\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Остановить: кнопка ниже 👇\n"
+            "   или команда <code>.spam stop</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup=spam_kb,
+    )
+@dp.callback_query(F.data == "spam_stop_btn")
+async def cb_spam_stop_btn(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось остановить спам", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "spam_stop_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может остановить спам", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    key = (conn_id, chat_id, owner_id)
+    task = business_spam_tasks.get(key)
+    if task and not task.done():
+        task.cancel()
+        await call.answer("⛔ Спам остановлен", show_alert=False)
+    else:
+        business_spam_tasks.pop(key, None)
+        await call.answer("◇ Спам не запущен", show_alert=False)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        (
+            "⛔ <b>СПАМ ОСТАНОВЛЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Рассылка прекращена\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.mute$"))
 async def on_mute_inline(msg: Message):
     if not msg.business_connection_id:
