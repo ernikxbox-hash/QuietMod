@@ -1026,6 +1026,49 @@ _WHISPER_FILE_MAP = {
     ".mp4": ("video_note.mp4", "video/mp4"),
 }
 
+# ── Сворачивание длинных расшифровок (кнопка «Тык») ──────────────────
+_TRANSCRIPT_COLLAPSE_MIN = 400   # длиннее — сворачиваем в «Тык»
+_TRANSCRIPT_MAX_MSG     = 4000   # безопасный лимит Telegram на сообщение
+_TRANSCRIPT_CACHE: dict[str, dict] = {}
+_TRANSCRIPT_CACHE_MAX  = 300
+
+def _chunk_text(text: str, size: int = _TRANSCRIPT_MAX_MSG) -> list[str]:
+    """Режет текст на куски по границе строк, не разрывая HTML-сущности."""
+    if len(text) <= size:
+        return [text]
+    chunks = []
+    while len(text) > size:
+        cut = text.rfind("\n", 0, size)
+        if cut < size // 2:
+            cut = size
+        while cut < len(text) and "&" in text[max(0, cut - 12):cut] and not text[cut - 1] == ";":
+            cut += 1
+        chunks.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+    if text:
+        chunks.append(text)
+    return chunks
+
+def _cache_transcript(label: str, text: str) -> str:
+    token = os.urandom(6).hex()
+    _TRANSCRIPT_CACHE[token] = {"label": label, "text": text, "chunks": []}
+    if len(_TRANSCRIPT_CACHE) > _TRANSCRIPT_CACHE_MAX:
+        stale = list(_TRANSCRIPT_CACHE)[:len(_TRANSCRIPT_CACHE) - _TRANSCRIPT_CACHE_MAX]
+        for k in stale:
+            _TRANSCRIPT_CACHE.pop(k, None)
+    return token
+
+def _tsc_teaser(label: str, preview: str = "") -> str:
+    text = f"🎤 <b>Расшифровка {label}:</b>\n{LINE}\n👆 <b>Тык</b> — откроется полный текст"
+    if preview:
+        text += f"\n\n<i>{preview}</i>"
+    return text
+
+def _tsc_kb(token: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👆 Тык", callback_data=f"show_tsc_{token}")],
+    ])
+
 async def _transcribe_voice(file_id: str) -> Optional[str]:
     try:
         file = await bot.get_file(file_id)
@@ -1129,6 +1172,73 @@ async def on_deleted(event: BusinessMessagesDeleted):
                         )
                     except Exception:
                         pass
+@dp.callback_query(F.data.startswith("show_tsc_"))
+async def cb_show_transcript(call: CallbackQuery):
+    token = call.data[len("show_tsc_"):]
+    await call.answer()
+    if not call.message:
+        return
+    entry = _TRANSCRIPT_CACHE.get(token)
+    if not entry:
+        try:
+            await call.message.edit_text("😔 Текст расшифровки больше недоступен.")
+        except Exception:
+            pass
+        return
+    label = entry["label"]
+    full = f"🎤 <b>Расшифровка {label}:</b>\n{LINE}\n{html_escape(entry['text'])}"
+    hide_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔼 Скрыть", callback_data=f"hide_tsc_{token}")],
+    ])
+    if len(full) <= _TRANSCRIPT_MAX_MSG:
+        entry["chunks"] = []
+        try:
+            await call.message.edit_text(full, reply_markup=hide_kb)
+        except Exception as e:
+            log.error(f"show transcript edit: {e}")
+        return
+    entry["chunks"] = []
+    parts = _chunk_text(html_escape(entry["text"]), _TRANSCRIPT_MAX_MSG - 60)
+    try:
+        await call.message.edit_text(
+            f"🎤 <b>Расшифровка {label}:</b>\n{LINE}\n{parts[0]}",
+            reply_markup=hide_kb,
+        )
+    except Exception as e:
+        log.error(f"show transcript edit (long): {e}")
+    for part in parts[1:]:
+        try:
+            sent = await bot.send_message(call.message.chat.id, part)
+            entry["chunks"].append(sent.message_id)
+        except Exception:
+            try:
+                sent = await bot.send_message(call.message.chat.id, part, parse_mode=None)
+                entry["chunks"].append(sent.message_id)
+            except Exception as e:
+                log.error(f"show transcript chunk: {e}")
+@dp.callback_query(F.data.startswith("hide_tsc_"))
+async def cb_hide_transcript(call: CallbackQuery):
+    token = call.data[len("hide_tsc_"):]
+    await call.answer()
+    if not call.message:
+        return
+    entry = _TRANSCRIPT_CACHE.get(token)
+    label = (entry or {}).get("label", "голосового")
+    for mid in (entry or {}).get("chunks", []):
+        try:
+            await bot.delete_message(call.message.chat.id, mid)
+        except Exception:
+            pass
+    if entry:
+        entry["chunks"] = []
+    preview = html_escape((entry or {}).get("text", "")[:90])
+    try:
+        await call.message.edit_text(
+            _tsc_teaser(label, preview),
+            reply_markup=_tsc_kb(token),
+        )
+    except Exception as e:
+        log.error(f"hide transcript: {e}")
 @dp.callback_query(F.data == "ai_open")
 async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     await state.set_state(S.ai_chat)
@@ -2161,11 +2271,21 @@ async def on_group_msg(msg: Message):
             file_id = (msg.voice or msg.video_note).file_id
             transcript = await _transcribe_voice(file_id)
             if transcript:
-                await _edit_ai_html(
-                    thinking,
-                    prefix="",
-                    answer=f"🎤 <b>Расшифровка {media_label}:</b>\n{LINE}\n{html_escape(transcript)}",
-                )
+                if len(transcript) > _TRANSCRIPT_COLLAPSE_MIN:
+                    token = _cache_transcript(media_label, transcript)
+                    try:
+                        await thinking.edit_text(
+                            _tsc_teaser(media_label, html_escape(transcript[:90])),
+                            reply_markup=_tsc_kb(token),
+                        )
+                    except Exception as e:
+                        log.error(f"group voice teaser edit: {e}")
+                else:
+                    await _edit_ai_html(
+                        thinking,
+                        prefix="",
+                        answer=f"🎤 <b>Расшифровка {media_label}:</b>\n{LINE}\n{html_escape(transcript)}",
+                    )
             else:
                 await _edit_ai_html(
                     thinking,
