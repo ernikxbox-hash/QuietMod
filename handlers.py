@@ -1020,6 +1020,12 @@ async def on_edited_business_msg(msg: Message):
         "file_id":    file_id,
     })
     log.debug(f"✏️ updated msg={msg.message_id} owner={owner_id} bot_edit={is_bot_edit}")
+_MIME_BY_EXT = {
+    ".oga": "audio/ogg",
+    ".ogg": "audio/ogg",
+    ".mp4": "video/mp4",
+}
+
 async def _transcribe_voice(file_id: str) -> Optional[str]:
     try:
         file = await bot.get_file(file_id)
@@ -1030,10 +1036,13 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
                     return None
                 audio_bytes = await resp.read()
         import io
+        fname = (file.file_path or "").split("/")[-1] or "voice.ogg"
+        ext = os.path.splitext(fname)[1].lower()
+        content_type = _MIME_BY_EXT.get(ext, "application/octet-stream")
         for api_key in GROQ_API_KEYS:
             try:
                 form = aiohttp.FormData()
-                form.add_field("file", io.BytesIO(audio_bytes), filename="voice.ogg", content_type="audio/ogg")
+                form.add_field("file", io.BytesIO(audio_bytes), filename=fname, content_type=content_type)
                 form.add_field("model", "whisper-large-v3")
                 form.add_field("response_format", "text")
                 async with aiohttp.ClientSession() as session:
@@ -2117,24 +2126,26 @@ async def on_group_msg(msg: Message):
                 msg.from_user.username or "",
                 msg.from_user.full_name or "",
             )
-    if msg.voice:
+    if msg.voice or msg.video_note:
+        media_label = "голосового" if msg.voice else "кружка"
         try:
             thinking = await msg.reply("🎤 Расшифровываю…")
         except Exception as e:
             log.error(f"group voice thinking reply: {e}")
             return
         try:
-            transcript = await _transcribe_voice(msg.voice.file_id)
+            file_id = (msg.voice or msg.video_note).file_id
+            transcript = await _transcribe_voice(file_id)
             if transcript:
                 await _edit_ai_html(
                     thinking,
                     prefix="",
-                    answer=f"🎤 <b>Расшифровка голосового:</b>\n{LINE}\n{html_escape(transcript)}",
+                    answer=f"🎤 <b>Расшифровка {media_label}:</b>\n{LINE}\n{html_escape(transcript)}",
                 )
             else:
                 await thinking.delete()
         except Exception as e:
-            log.error(f"group voice transcription: {e}")
+            log.error(f"group voice/video transcription: {e}")
             try:
                 await thinking.delete()
             except Exception:
