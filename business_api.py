@@ -130,6 +130,29 @@ async def _business_send_photo_ex(conn_id: str, chat_id: int, file_id: str, capt
         return False, None, str(e)
 
 
+async def _business_send_chat_action(conn_id: str, chat_id: int, action: str = "typing") -> bool:
+    """sendChatAction через бизнес-подключение: индикатор показывается от имени
+    бизнес-аккаунта (как будто печатает сам владелец), а не от имени бота.
+    Индикатор живёт ~5 секунд — для длительного показа нужно переотправлять."""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendChatAction"
+    payload = {
+        "business_connection_id": conn_id,
+        "chat_id": chat_id,
+        "action": action,
+    }
+    try:
+        session = _session()
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            data = await resp.json()
+            if not data.get("ok"):
+                log.warning(f"sendChatAction API error: {data.get('description')}")
+                return False
+            return True
+    except Exception as e:
+        log.warning(f"sendChatAction HTTP: {e}")
+        return False
+
+
 async def _business_delete_message_ex(conn_id: str, msg_id: int) -> tuple[bool, int | None, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteBusinessMessages"
     payload = {

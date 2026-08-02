@@ -51,6 +51,7 @@ knb_games: dict[tuple, dict] = {}  # ("dm"|"bg", conn_id, chat_id) или ("grou
 business_code_mode: set[str] = set()
 business_wbl_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id
 business_nomute_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id — анти-мут: сообщения владельца идут через бота (невидимы чужим ботам)
+business_peek_tasks: dict[tuple[str, int], asyncio.Task] = {}  # (conn_id, chat_id) -> задача «печатает...» (.peek)
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
 MAX_MSG_CACHE = 200
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
@@ -465,6 +466,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".nomute",
         "note": "Работает в приватных бизнес-чатах"
     },
+    "peek": {
+        "title": "👀 .peek",
+        "desc": "Фейковая «печатает...» в бизнес-чате на N секунд — невидимо для собеседника.",
+        "usage": ".peek N — N секунд",
+        "example": ".peek 15",
+        "note": "Индикатор от твоего имени · стелс (команда удаляется)"
+    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -517,7 +525,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "nomute", "price", "knb",
+    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "nomute", "peek", "price", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):

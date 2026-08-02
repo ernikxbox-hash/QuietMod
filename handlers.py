@@ -61,6 +61,7 @@ from business_api import (
     _business_delete_retry,
     _business_edit_message,
     _business_edit_message_ex,
+    _business_send_chat_action,
     _business_send_message_ex,
     _business_send_photo_ex,
 )
@@ -527,6 +528,55 @@ async def cb_nomute_off_btn(call: CallbackQuery):
         ),
         reply_markup={"inline_keyboard": []},
     )
+async def _peek_worker(conn_id: str, chat_id: int, seconds: int):
+    """Держим индикатор «печатает...» от имени бизнес-аккаунта указанное время.
+
+    Индикатор живёт ~5 секунд, поэтому переотправляем action каждые 4 секунды.
+    Останавливается сам по истечении времени, по новой команде или когда
+    владелец реально отправляет сообщение."""
+    key = (conn_id, chat_id)
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    try:
+        while loop.time() < deadline:
+            await _business_send_chat_action(conn_id, chat_id, "typing")
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            await asyncio.sleep(min(4.0, remaining))
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        log.error(f"👀 peek worker: {e}")
+    finally:
+        business_peek_tasks.pop(key, None)
+@dp.business_message(F.text.regexp(r"(?i)^\.peek(\s+\d+)?\s*$"))
+async def on_peek_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".peek")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    m = re.match(r"(?i)^\.peek\s+(\d+)\s*$", msg.text or "")
+    if not m:
+        # Голый .peek — молча убираем команду, чтобы не светить её в чате
+        await _business_delete_retry(msg.business_connection_id, msg.message_id)
+        return
+    seconds = max(1, min(int(m.group(1)), 120))
+    key = (msg.business_connection_id, msg.chat.id)
+    existing = business_peek_tasks.get(key)
+    if existing and not existing.done():
+        existing.cancel()
+    business_peek_tasks[key] = asyncio.create_task(
+        _peek_worker(msg.business_connection_id, msg.chat.id, seconds)
+    )
+    # Стелс: саму команду удаляем, чтобы собеседник её не увидел
+    await _business_delete_retry(msg.business_connection_id, msg.message_id)
+    log.info(f"👀 .peek {seconds}s chat={msg.chat.id}")
 @dp.business_message(F.text.regexp(r"(?i)^\.afk(\s+.*)?$"))
 async def on_afk_inline(msg: Message):
     if not msg.business_connection_id:
@@ -1560,11 +1610,16 @@ async def cb_knb_cancel(call: CallbackQuery):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".nomute", ".unomute", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".nomute", ".unomute", ".peek", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
         return
+    # Владелец реально что-то отправил — фейковая «печатает...» останавливается
+    if msg.from_user and msg.from_user.id == owner_id:
+        peek_task = business_peek_tasks.get((msg.business_connection_id, msg.chat.id))
+        if peek_task and not peek_task.done():
+            peek_task.cancel()
     if msg.from_user and getattr(msg.chat, "type", None) in ("group", "supergroup"):
         _knb_cache_member(msg.chat.id, msg.from_user)
     if (
