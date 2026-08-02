@@ -23,7 +23,7 @@ async def _close_http() -> None:
         _http_session = None
 
 
-async def _tg_send_message(uid: int, text: str, reply_markup: dict) -> int | None:
+async def _tg_send_message(uid: int, text: str, reply_markup: dict, reply_to_message_id: int | None = None) -> int | None:
     """Отправка обычного сообщения с кастомными иконками на кнопках (raw Bot API).
 
     Нужно для icon_custom_emoji_id (Bot API 9.4) — старый aiogram его не знает.
@@ -35,6 +35,8 @@ async def _tg_send_message(uid: int, text: str, reply_markup: dict) -> int | Non
         "parse_mode": "HTML",
         "reply_markup": reply_markup,
     }
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
     try:
         session = _session()
         async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -102,13 +104,17 @@ async def _business_edit_message(conn_id: str, chat_id: int, msg_id: int, text: 
     return ok
 
 
-async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tuple[bool, int | None, str | None]:
+async def _business_send_message_ex(conn_id: str, chat_id: int, text: str, reply_markup: dict | None = None, parse_mode: str | None = None) -> tuple[bool, int | None, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "business_connection_id": conn_id,
         "chat_id": chat_id,
         "text": text,
     }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     try:
         session = _session()
         async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:

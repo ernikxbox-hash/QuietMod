@@ -359,6 +359,47 @@ async def _show_home(uid: int, text: str, reply_markup, target_msg: "Message | N
             sent = await bot.send_message(uid, text, reply_markup=reply_markup)
         sent_id = sent.message_id
     home_msg[uid] = sent_id
+
+
+async def _send_rich(chat_id: int, text: str, markup, reply_to_message_id: int | None = None) -> int | None:
+    """Отправка с кастомными иконками на кнопках (raw Bot API 9.4) и фолбэком
+    на обычный путь aiogram при любой ошибке. Возвращает message_id или None."""
+    global _ICON_API_BROKEN
+    raw_markup = None if _ICON_API_BROKEN else _enrich_markup(markup)
+    sent_id = None
+    if raw_markup:
+        sent_id = await _tg_send_message(chat_id, text, raw_markup, reply_to_message_id=reply_to_message_id)
+        if sent_id is None:
+            _ICON_API_BROKEN = True
+            log.warning("🔧 Telegram отверг icon_custom_emoji_id — кастом-иконки отключены (вернутся после рестарта)")
+    if sent_id is None:
+        try:
+            sent = await bot.send_message(chat_id, text, reply_markup=markup,
+                                          reply_to_message_id=reply_to_message_id)
+            sent_id = sent.message_id
+        except Exception as e:
+            log.error(f"send rich fallback: {e}")
+            return None
+    return sent_id
+
+
+async def _edit_rich(chat_id: int, msg_id: int, text: str, markup) -> bool:
+    """Редактирование сообщения с кастомными иконками на кнопках + фолбэк aiogram."""
+    global _ICON_API_BROKEN
+    raw_markup = None if _ICON_API_BROKEN else _enrich_markup(markup)
+    if raw_markup:
+        if await _tg_edit_message(chat_id, msg_id, text, raw_markup):
+            return True
+        _ICON_API_BROKEN = True
+    try:
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id,
+                                    reply_markup=markup)
+        return True
+    except Exception as e:
+        log.warning(f"edit rich fallback: {e}")
+        return False
+
+
 async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[int]:
     old_id = last_notify_msg.get(owner_id)
     if old_id:
@@ -367,13 +408,12 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
         except Exception:
             pass
         last_notify_msg.pop(owner_id, None)
-    try:
-        sent = await bot.send_message(owner_id, text, reply_markup=reply_markup)
-        last_notify_msg[owner_id] = sent.message_id
-        return sent.message_id
-    except Exception as e:
-        log.error(f"send notify to owner={owner_id}: {e}")
+    sent_id = await _send_rich(owner_id, text, reply_markup)
+    if sent_id is None:
+        log.error(f"send notify to owner={owner_id}: failed")
         return None
+    last_notify_msg[owner_id] = sent_id
+    return sent_id
 _CPT_EMOJI: dict[str, str] = {}  # нормализованный эмодзи (placeholder) -> custom_emoji_id из пака CPT_Emoji
 _CPT_EMOJI_LOADED = False
 
@@ -472,83 +512,83 @@ def kb_main(uid: int) -> InlineKeyboardMarkup:
     ])
     rows.append([InlineKeyboardButton(text="💎 Поддержать проект", callback_data="donate")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-def kb_back(target: str = "menu", label: str = "← В меню") -> InlineKeyboardMarkup:
+def kb_back(target: str = "menu", label: str = "🏠 В меню") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=label, callback_data=f"back_{target}")]
     ])
 def kb_notify(save_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="◆ Сохранить ➩", callback_data=f"nsave_{save_id}"),
-            InlineKeyboardButton(text="✕ Удалить",      callback_data=f"ndel_{save_id}"),
+            InlineKeyboardButton(text="📥 Сохранить ➩", callback_data=f"nsave_{save_id}"),
+            InlineKeyboardButton(text="🗑️ Удалить",     callback_data=f"ndel_{save_id}"),
         ],
     ])
 def kb_ai() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="✕ Сбросить диалог", callback_data="ai_clear"),
-            InlineKeyboardButton(text="← Завершить",       callback_data="ai_exit"),
+            InlineKeyboardButton(text="🔄 Сбросить диалог", callback_data="ai_clear"),
+            InlineKeyboardButton(text="🚪 Завершить",       callback_data="ai_exit"),
         ],
     ])
 def kb_donate() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⟡ 15 ⭐", callback_data="pay_donate_15")],
-        [InlineKeyboardButton(text="⟡ 30 ⭐", callback_data="pay_donate_30")],
-        [InlineKeyboardButton(text="⟡ 50 ⭐", callback_data="pay_donate_50")],
-        [InlineKeyboardButton(text="← В меню", callback_data="back_menu")],
+        [InlineKeyboardButton(text="💎 15 ⭐", callback_data="pay_donate_15")],
+        [InlineKeyboardButton(text="💎 30 ⭐", callback_data="pay_donate_30")],
+        [InlineKeyboardButton(text="💎 50 ⭐", callback_data="pay_donate_50")],
+        [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
     ])
 CMD_FEATURES: dict[str, dict] = {
     "ai": {
-        "title": "◇ .ai",
+        "title": "✨ .ai",
         "desc": "Задай вопрос — ИИ ответит. Работает с текстом и фото.",
         "usage": ".ai твой вопрос",
         "example": ".ai объясни теорию относительности",
         "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах."
     },
     "search": {
-        "title": "◇ .search",
+        "title": "🔍 .search",
         "desc": "Поиск в интернете через DuckDuckGo + ИИ.",
         "usage": ".search запрос",
         "example": ".search курс доллара сегодня",
         "note": "Погода: .search погода в Лондоне"
     },
     "spam": {
-        "title": "◇ .spam",
+        "title": "📣 .spam",
         "desc": "Отправляет N одинаковых сообщений в чат.",
         "usage": ".spam текст число",
         "example": ".spam Привет 10",
         "note": ".spam stop — остановить"
     },
     "mute": {
-        "title": "◇ .mute",
+        "title": "🔇 .mute",
         "desc": "Удаляет все сообщения от собеседника в личке.",
         "usage": ".mute — включить",
         "example": ".unmute — выключить",
         "note": "Только для личных чатов (Business)"
     },
     "afk": {
-        "title": "◇ .afk",
+        "title": "🌙 .afk",
         "desc": "Автоответчик: «я не в сети».",
         "usage": ".afk [заметка]",
         "example": ".afk вернусь через час",
         "note": "Работает в ЛС с ботом и бизнес-чатах · .unafk — выключить"
     },
     "code": {
-        "title": "◇ .code",
+        "title": "💻 .code",
         "desc": "Всё, что пишешь — форматируется как код.",
         "usage": ".code — включить",
         "example": ".uncode — выключить",
         "note": "Текст в <pre><code>...</code></pre>"
     },
     "wbl": {
-        "title": "◇ .wbl",
+        "title": "🚫 .wbl",
         "desc": "Удаляет мат и флуд от собеседника.",
         "usage": ".wbl — включить",
         "example": ".unwbl — выключить",
         "note": "Защита от мата, обфускации, флуда"
     },
     "price": {
-        "title": "◇ .price",
+        "title": "💰 .price",
         "desc": "Оценка стоимости юзернейма (как на Fragment).",
         "usage": ".price @username",
         "example": ".price @alimtona",
@@ -576,49 +616,49 @@ CMD_FEATURES: dict[str, dict] = {
         "note": "Индикатор от твоего имени · стелс (команда удаляется)"
     },
     "bold": {
-        "title": "◆ .bold",
+        "title": "✒️ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
         "usage": ".bold текст",
         "example": ".bold важное сообщение",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "italic": {
-        "title": "◆ .italic",
+        "title": "🖋️ .italic",
         "desc": "Курсив — наклонный текст.",
         "usage": ".italic текст",
         "example": ".italic нежный акцент",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "mono": {
-        "title": "◆ .mono",
+        "title": "⌨️ .mono",
         "desc": "Моноширинный шрифт — как код.",
         "usage": ".mono текст",
         "example": ".mono print('hello')",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "line": {
-        "title": "◆ .line",
+        "title": "📏 .line",
         "desc": "Подчёркнутый текст.",
         "usage": ".line текст",
         "example": ".line подчёркнуто",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "crossed": {
-        "title": "◆ .crossed",
+        "title": "✂️ .crossed",
         "desc": "Зачёркнутый текст.",
         "usage": ".crossed текст",
         "example": ".crossed старый вариант",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "hidden": {
-        "title": "◆ .hidden",
+        "title": "🙈 .hidden",
         "desc": "Скрытый текст — спойлер, виден по тапу.",
         "usage": ".hidden текст",
         "example": ".hidden ответ на загадку",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "quote": {
-        "title": "◆ .quote",
+        "title": "💬 .quote",
         "desc": "Цитата — текст в блоке цитирования.",
         "usage": ".quote текст",
         "example": ".quote знание — сила",
@@ -639,12 +679,12 @@ def kb_cmd() -> InlineKeyboardMarkup:
 
 def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◆ Пользователи",   callback_data="adm_users")],
-        [InlineKeyboardButton(text="◆ Статистика",     callback_data="adm_stats")],
-        [InlineKeyboardButton(text="✦ Предложения",    callback_data="adm_ideas")],
-        [InlineKeyboardButton(text="▤ Сообщение всем", callback_data="adm_broadcast")],
-        [InlineKeyboardButton(text="▤ По группам/каналам", callback_data="adm_broadcast_groups")],
-        [InlineKeyboardButton(text="← В меню",         callback_data="back_menu")],
+        [InlineKeyboardButton(text="👥 Пользователи",   callback_data="adm_users")],
+        [InlineKeyboardButton(text="📊 Статистика",     callback_data="adm_stats")],
+        [InlineKeyboardButton(text="💡 Предложения",    callback_data="adm_ideas")],
+        [InlineKeyboardButton(text="📢 Сообщение всем", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="📣 По группам/каналам", callback_data="adm_broadcast_groups")],
+        [InlineKeyboardButton(text="🏠 В меню",         callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (
     "Ты сдержанный, элегантный ИИ-консьерж внутри Telegram-бота Quiet Mod. "
