@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import random
 import re
 import signal
 from datetime import datetime, timedelta, timezone
@@ -914,11 +915,185 @@ async def on_spam(msg: Message):
         return
     spam_tasks[key] = asyncio.create_task(_spam_worker(msg.chat.id, uid, text_part, count))
     await msg.answer(f"◇ Запустил спам: {count}", parse_mode=None)
+# ── ⚔️ КАМЕНЬ · НОЖНИЦЫ · БУМАГА (.knb) ────────────────────────────
+_KPB_EMOJI = {"r": "✊", "s": "✌️", "p": "🖐"}
+_KPB_BEATS = {"r": "s", "s": "p", "p": "r"}
+
+def _knb_display_name(name: str, username: str) -> str:
+    if username:
+        return f"@{username}"
+    return html_escape(name) or "Собеседник"
+
+def _knb_header(game: dict) -> str:
+    return (
+        f"⚔️ <b>КАМЕНЬ · НОЖНИЦЫ · БУМАГА</b>\n"
+        f"<code>{LINE}</code>\n\n"
+        f"◇ {game['a_name']}  vs  {game['b_name']}\n\n"
+    )
+
+def _knb_move_kb() -> dict:
+    return {"inline_keyboard": [
+        [
+            {"text": "✊", "callback_data": "knb_r"},
+            {"text": "✌️", "callback_data": "knb_s"},
+            {"text": "🖐", "callback_data": "knb_p"},
+        ],
+        [{"text": "✕ Отменить", "callback_data": "knb_cancel"}],
+    ]}
+
+def _knb_result_kb() -> dict:
+    return {"inline_keyboard": [
+        [{"text": "🔁 Сыграть ещё", "callback_data": "knb_again"}],
+        [{"text": "✕ Закрыть", "callback_data": "knb_cancel"}],
+    ]}
+
+@dp.business_message(F.text.regexp(r"(?i)^\.knb(\s+.*)?$"))
+async def on_knb_start(msg: Message):
+    conn_id = msg.business_connection_id
+    if not conn_id:
+        return
+    owner_id = await _get_owner_id_cached(conn_id, ".knb")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        await _business_edit_message(
+            conn_id, msg.chat.id, msg.message_id,
+            "⚔️ <b>Камень-ножницы-бумага</b> доступна в личных чатах (Business)."
+        )
+        return
+    key = (conn_id, msg.chat.id)
+    if key in knb_games:
+        await _business_edit_message(
+            conn_id, msg.chat.id, msg.message_id,
+            "⚔️ <b>Игра уже идёт</b> — закончи её или отмени.\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Отменить: кнопка «✕ Отменить» на сообщении игры.",
+        )
+        return
+    game = {
+        "a_id": owner_id,
+        "b_id": msg.chat.id,
+        "a_name": _knb_display_name(msg.from_user.full_name or "", msg.from_user.username or ""),
+        "b_name": _knb_display_name(
+            getattr(msg.chat, "first_name", "") or "",
+            getattr(msg.chat, "username", "") or "",
+        ),
+        "turn": random.choice(["a", "b"]),
+        "move_a": None,
+        "move_b": None,
+    }
+    knb_games[key] = game
+    first_name = game["a_name"] if game["turn"] == "a" else game["b_name"]
+    await _business_edit_message(
+        conn_id, msg.chat.id, msg.message_id,
+        _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}",
+        reply_markup=_knb_move_kb(),
+    )
+    log.info(f"⚔️ .knb start conn={conn_id} chat={msg.chat.id} first={game['turn']}")
+
+@dp.callback_query(F.data.in_({"knb_r", "knb_s", "knb_p"}))
+async def cb_knb_move(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Игра недоступна", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    key = (conn_id, chat_id)
+    game = knb_games.get(key)
+    if not game:
+        await call.answer("⚔️ Игра не найдена — начни новую: .knb", show_alert=True)
+        return
+    uid = call.from_user.id
+    move = call.data.split("_")[1]
+    expected = game["a_id"] if game["turn"] == "a" else game["b_id"]
+    if uid != expected:
+        await call.answer("🙅 Не твой ход — жди очереди!", show_alert=False)
+        return
+    if game["turn"] == "a":
+        game["move_a"] = move
+        game["turn"] = "b"
+    else:
+        game["move_b"] = move
+        game["turn"] = "a"
+    if game["move_a"] and game["move_b"]:
+        emoji_a = _KPB_EMOJI[game["move_a"]]
+        emoji_b = _KPB_EMOJI[game["move_b"]]
+        if game["move_a"] == game["move_b"]:
+            result = "🤝 <b>Ничья!</b>"
+        elif _KPB_BEATS[game["move_a"]] == game["move_b"]:
+            result = f"🏆 Побеждает: <b>{game['a_name']}</b>"
+        else:
+            result = f"🏆 Побеждает: <b>{game['b_name']}</b>"
+        await _business_edit_message(
+            conn_id, chat_id, call.message.message_id,
+            _knb_header(game)
+            + f"🆚 {game['a_name']} {emoji_a}  vs  {emoji_b} {game['b_name']}\n\n"
+            + f"{result}",
+            reply_markup=_knb_result_kb(),
+        )
+        await call.answer("🎉 Итог готов!", show_alert=False)
+        return
+    mover_name = game["a_name"] if uid == game["a_id"] else game["b_name"]
+    next_name = game["a_name"] if game["turn"] == "a" else game["b_name"]
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        _knb_header(game)
+        + f"✅ <b>{mover_name}</b> сделал ход 🤫\n\n"
+        + f"🎯 Теперь очередь: <b>{next_name}</b>",
+        reply_markup=_knb_move_kb(),
+    )
+    await call.answer("🤫 Ход записан", show_alert=False)
+
+@dp.callback_query(F.data == "knb_again")
+async def cb_knb_again(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Игра недоступна", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    game = knb_games.get((conn_id, chat_id))
+    if not game:
+        await call.answer("⚔️ Игра не найдена", show_alert=True)
+        return
+    game["move_a"] = None
+    game["move_b"] = None
+    game["turn"] = random.choice(["a", "b"])
+    first_name = game["a_name"] if game["turn"] == "a" else game["b_name"]
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}",
+        reply_markup=_knb_move_kb(),
+    )
+    await call.answer("🔁 Новый раунд", show_alert=False)
+
+@dp.callback_query(F.data == "knb_cancel")
+async def cb_knb_cancel(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Игра недоступна", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    knb_games.pop((conn_id, chat_id), None)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        "⚔️ <b>Игра закрыта</b> — было жарко 👁️",
+        reply_markup={"inline_keyboard": []},
+    )
+    await call.answer("⚔️ Игра закрыта", show_alert=False)
+
 @dp.business_message()
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
@@ -2205,6 +2380,15 @@ DEVLOG = (
     "◆ <b>Сохранить навсегда</b>\n"
     "   Одна кнопка под уведомлением — и сообщение\n"
     "   останется у тебя навсегда вне зависимости от архива.\n\n"
+    f"{LINE}\n"
+    "⚔️ <b>МИНИ-ИГРЫ</b>\n\n"
+    "◇ <b>Камень · Ножницы · Бумага</b>\n"
+    "   Напиши <code>.knb</code> в личном чате —\n"
+    "   сыграй с собеседником: секретные ходы,\n"
+    "   случайный первый ход, реванши.\n\n"
+    "💤 <b>AFK</b> — автоответ «не в сети»:\n"
+    "   <code>.afk</code> или <code>.afk заметка</code> в ЛС с ботом,\n"
+    "   выключить — кнопка «🔴 Выключить AFK».\n\n"
     f"{LINE}\n"
     "⟡ <b>ПОДДЕРЖКА ПРОЕКТА</b>\n\n"
     "   Quiet Mod бесплатен и без лимитов — навсегда.\n"

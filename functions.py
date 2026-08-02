@@ -47,6 +47,7 @@ business_muted_chats: set[tuple[str, int]] = set()
 business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
 user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner_id, started_at, note}
+knb_games: dict[tuple[str, int], dict] = {}  # (conn_id, chat_id) -> состояние игры .knb
 business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
@@ -449,6 +450,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".price @alimtona",
         "note": "В бизнес-чате без аргумента — оценит собеседника"
     },
+    "knb": {
+        "title": "⚔️ .knb",
+        "desc": "Камень-ножницы-бумага с собеседником.",
+        "usage": ".knb",
+        "example": ".knb — в ЛС (Business)",
+        "note": "Секретные ходы · случайный первый ход"
+    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -501,7 +509,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "price",
+    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "price", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
