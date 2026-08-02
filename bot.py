@@ -4,6 +4,7 @@ import database as db
 from core import ADMIN_ID, bot, dp, log
 from tasks import _purge_loop
 from business_api import _close_http
+from functions import _load_cpt_emoji
 import handlers
 
 async def _sync_bot_chats():
@@ -26,6 +27,10 @@ async def _sync_bot_chats():
 async def main():
     await db.init_db()
     await db.purge_expired_saved()
+    try:
+        await asyncio.wait_for(_load_cpt_emoji(), timeout=5)  # пак премиум-эмодзи (не блокируем старт)
+    except asyncio.TimeoutError:
+        log.warning("✨ Пак CPT_Emoji: таймаут при старте — подгрузится при первом /start")
     await db.record_stat("launch")
     log.info("📊 Статистика: запуск зафиксирован")
     await _sync_bot_chats()

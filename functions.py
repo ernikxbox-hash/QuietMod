@@ -348,28 +348,72 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
     except Exception as e:
         log.error(f"send notify to owner={owner_id}: {e}")
         return None
+_CPT_EMOJI: dict[str, str] = {}  # нормализованный эмодзи (placeholder) -> custom_emoji_id из пака CPT_Emoji
+_CPT_EMOJI_LOADED = False
+
+
+def _norm_emoji(char: str) -> str:
+    """Нормализация эмодзи для матчинга с паком: убираем VS16 (U+FE0F) и пробелы.
+
+    В паке placeholder может быть записан без вариационного селектора
+    (например «👁» вместо «👁️») — так матч не ломается."""
+    return char.replace("\ufe0f", "").strip()
+
+
+async def _load_cpt_emoji() -> None:
+    """Тянем пак кастомных эмодзи CPT_Emoji и запоминаем emoji_id.
+
+    В тексте меню они рендерятся через <tg-emoji> у всех пользователей,
+    а у подписчиков Premium — анимированные. Флаг ставится только при
+    успехе — при ошибке загрузка повторится при следующем вызове."""
+    global _CPT_EMOJI_LOADED
+    if _CPT_EMOJI_LOADED:
+        return
+    try:
+        sset = await bot.get_sticker_set("CPT_Emoji")
+        for st in sset.stickers:
+            if getattr(st, "type", None) == "custom_emoji" and st.emoji and st.custom_emoji_id:
+                _CPT_EMOJI.setdefault(_norm_emoji(st.emoji), st.custom_emoji_id)
+        _CPT_EMOJI_LOADED = True
+        if _CPT_EMOJI:
+            log.info(f"✨ Пак CPT_Emoji загружен: {len(_CPT_EMOJI)} эмодзи")
+            log.info(f"✨ В паке есть: {sorted(_CPT_EMOJI)}")
+        else:
+            log.warning("✨ Пак CPT_Emoji пуст или не содержит custom_emoji")
+    except Exception as e:
+        log.warning(f"✨ Пак CPT_Emoji не загружен (повтор при следующем вызове): {e}")
+
+
+def pe(char: str, fallback: str | None = None) -> str:
+    """HTML-тег кастомного эмодзи из пака CPT_Emoji; если в паке такого нет — обычный символ."""
+    cid = _CPT_EMOJI.get(_norm_emoji(char))
+    if cid:
+        return f'<tg-emoji emoji-id="{cid}">{char}</tg-emoji>'
+    return fallback or char
+
+
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
-        rows.append([InlineKeyboardButton(text="▲ Admin Suite", callback_data="adm")])
+        rows.append([InlineKeyboardButton(text="🛠️ Admin Suite", callback_data="adm")])
     rows.append([
-        InlineKeyboardButton(text="▣ Архив",        callback_data="show_all"),
-        InlineKeyboardButton(text="◆ Профиль",      callback_data="stats"),
+        InlineKeyboardButton(text="📂 Архив",        callback_data="show_all"),
+        InlineKeyboardButton(text="👤 Профиль",      callback_data="stats"),
     ])
     rows.append([
-        InlineKeyboardButton(text="◈ Сохранённые ➩", callback_data="show_saved"),
+        InlineKeyboardButton(text="🔖 Сохранённые",  callback_data="show_saved"),
     ])
-    rows.append([InlineKeyboardButton(text="◐ Поиск по архиву", callback_data="search")])
-    rows.append([InlineKeyboardButton(text="◆ ИИ-консьерж — без лимитов", callback_data="ai_open")])
+    rows.append([InlineKeyboardButton(text="🔍 Поиск по архиву", callback_data="search")])
+    rows.append([InlineKeyboardButton(text="✨ ИИ-консьерж — без лимитов", callback_data="ai_open")])
     rows.append([
-        InlineKeyboardButton(text="⟡ Приглашения", callback_data="referrals"),
-        InlineKeyboardButton(text="✕ Очистить",    callback_data="clear_cache"),
+        InlineKeyboardButton(text="👥 Приглашения",  callback_data="referrals"),
+        InlineKeyboardButton(text="🧹 Очистить",     callback_data="clear_cache"),
     ])
     rows.append([
-        InlineKeyboardButton(text="✦ Предложить",   callback_data="suggest_idea"),
-        InlineKeyboardButton(text="⚙ Подключение",  callback_data="howto"),
+        InlineKeyboardButton(text="💡 Предложить",   callback_data="suggest_idea"),
+        InlineKeyboardButton(text="⚙️ Подключение",  callback_data="howto"),
     ])
-    rows.append([InlineKeyboardButton(text="⟡ Поддержать проект", callback_data="donate")])
+    rows.append([InlineKeyboardButton(text="💎 Поддержать проект", callback_data="donate")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 def kb_back(target: str = "menu", label: str = "← В меню") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[

@@ -50,11 +50,13 @@ from functions import (
     _get_weather,
     _groq_request,
     _is_weather_query,
+    _load_cpt_emoji,
     _normalize_code_blocks,
     _price_estimate,
     _reply_ai_html,
     _send_notify,
     _show_home,
+    pe,
 )
 from business_api import (
     _business_copy_message,
@@ -244,21 +246,22 @@ async def cmd_start(msg: Message, state: FSMContext):
             )
         except Exception:
             pass
+    await _load_cpt_emoji()
     home_text_full = (
-        f"◆ <b>QUIET MOD</b> 👁️\n"
+        f"{pe('👁️')} <b>QUIET MOD</b>\n"
         f"<code>{LINE}</code>\n\n"
-        f"<b>{html_escape(name)}</b>, добро пожаловать в тишину.\n\n"
+        f"<b>{html_escape(name)}</b>, добро пожаловать в тишину.\n"
         "Я слежу за тем, что исчезает —\n"
         "<b>удалённые и изменённые</b> сообщения\n"
         "появятся здесь раньше, чем их забудут.\n\n"
         f"<code>{LINE}</code>\n"
-        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
-        f"◇ Перехват     <b>безлимит</b>\n"
-        f"◇ Архив        <b>безлимит</b>\n"
-        f"◇ Поиск        <b>включён</b>\n"
-        f"◇ ИИ           <b>без лимитов</b>\n"
+        f"{pe('📂')} Архив        <b>безлимит</b>\n"
+        f"{pe('🔍')} Поиск        <b>включён</b>\n"
+        f"{pe('✨')} ИИ           <b>без лимитов</b>\n"
+        f"{pe('🔇')} Mute · WBL   <b>в бизнес-чатах</b>\n"
+        f"{pe('🕵️')} Перехват     <b>безлимит</b>\n"
         f"<code>{LINE}</code>\n\n"
-        f"◇ Пригласить:\n"
+        f"{pe('🔗')} Пригласить:\n"
         f"<code>{ref_link(uid)}</code>"
     )
     await _show_home(uid, home_text_full, kb_main(uid), msg)
