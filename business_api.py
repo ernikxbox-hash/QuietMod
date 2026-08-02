@@ -23,57 +23,6 @@ async def _close_http() -> None:
         _http_session = None
 
 
-async def _tg_send_message(uid: int, text: str, reply_markup: dict, reply_to_message_id: int | None = None) -> int | None:
-    """Отправка обычного сообщения с кастомными иконками на кнопках (raw Bot API).
-
-    Нужно для icon_custom_emoji_id (Bot API 9.4) — старый aiogram его не знает.
-    Возвращает message_id или None при ошибке."""
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": uid,
-        "text": text,
-        "parse_mode": "HTML",
-        "reply_markup": reply_markup,
-    }
-    if reply_to_message_id:
-        payload["reply_to_message_id"] = reply_to_message_id
-    try:
-        session = _session()
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            data = await resp.json()
-            if not data.get("ok"):
-                log.warning(f"sendMessage(icon) API error: {data.get('description')}")
-                return None
-            result = data.get("result") or {}
-            return result.get("message_id")
-    except Exception as e:
-        log.warning(f"sendMessage(icon) HTTP: {e}")
-        return None
-
-
-async def _tg_edit_message(uid: int, msg_id: int, text: str, reply_markup: dict) -> bool:
-    """editMessageText с кастомными иконками на кнопках (raw Bot API)."""
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
-    payload = {
-        "chat_id": uid,
-        "message_id": msg_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "reply_markup": reply_markup,
-    }
-    try:
-        session = _session()
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            data = await resp.json()
-            if not data.get("ok"):
-                log.warning(f"editMessageText(icon) API error: {data.get('description')}")
-                return False
-            return True
-    except Exception as e:
-        log.warning(f"editMessageText(icon) HTTP: {e}")
-        return False
-
-
 async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, text: str, reply_markup=None) -> tuple[bool, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
     payload = {
@@ -104,17 +53,13 @@ async def _business_edit_message(conn_id: str, chat_id: int, msg_id: int, text: 
     return ok
 
 
-async def _business_send_message_ex(conn_id: str, chat_id: int, text: str, reply_markup: dict | None = None, parse_mode: str | None = None) -> tuple[bool, int | None, str | None]:
+async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tuple[bool, int | None, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "business_connection_id": conn_id,
         "chat_id": chat_id,
         "text": text,
     }
-    if reply_markup is not None:
-        payload["reply_markup"] = reply_markup
-    if parse_mode:
-        payload["parse_mode"] = parse_mode
     try:
         session = _session()
         async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:

@@ -38,11 +38,7 @@ from core import (
     bot,
     log,
 )
-from business_api import (
-    _business_edit_message_ex,
-    _tg_edit_message,
-    _tg_send_message,
-)
+from business_api import _business_edit_message_ex
 
 ai_history: dict[int, list] = {}
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
@@ -312,94 +308,31 @@ def fmt_sender(from_name: str, username: str) -> str:
     return from_name
 def home_text() -> str:
     return (
-        f"{pe('👁️')} <b>QUIET MOD</b>\n"
+        f"◆ <b>QUIET MOD</b> 👁️\n"
         f"<code>{LINE}</code>\n\n"
-        f"{pe('✅')} Статус       <b>Свободен · без лимитов</b>\n"
-        f"{pe('👁🗨')} Перехват     <b>безлимит</b>\n"
-        f"{pe('🖼️')} Архив        <b>безлимит</b>\n"
-        f"{pe('🔍')} Поиск        <b>включён</b>\n"
-        f"{pe('🧩')} ИИ           <b>без лимитов</b>\n"
+        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
+        f"◇ Перехват     <b>безлимит</b>\n"
+        f"◇ Архив        <b>безлимит</b>\n"
+        f"◇ Поиск        <b>включён</b>\n"
+        f"◇ ИИ           <b>без лимитов</b>\n"
         f"<code>{LINE}</code>"
     )
-_ICON_API_BROKEN = False  # Telegram отверг icon_custom_emoji_id (напр. нет Premium у владельца) — иконки не пробуем снова
-
-
 async def _show_home(uid: int, text: str, reply_markup, target_msg: "Message | None" = None):
-    """Показывает/обновляет главное меню. Если в паке CPT_Emoji есть эмодзи
-    для кнопок — ставим кастомные иконки (icon_custom_emoji_id, Bot API 9.4)
-    через raw-запрос; при любой ошибке бесшовно откатываемся на обычный путь
-    и запоминаем отказ, чтобы не долбить API на каждое обновление."""
-    global _ICON_API_BROKEN
-    raw_markup = None if _ICON_API_BROKEN else _enrich_markup(reply_markup)
     existing_id = home_msg.get(uid)
     if existing_id and target_msg:
         try:
-            if raw_markup:
-                ok = await _tg_edit_message(uid, existing_id, text, raw_markup)
-            else:
-                await bot.edit_message_text(
-                    text, chat_id=uid, message_id=existing_id,
-                    reply_markup=reply_markup, parse_mode="HTML"
-                )
-                ok = True
-            if ok:
-                return
+            await bot.edit_message_text(
+                text, chat_id=uid, message_id=existing_id,
+                reply_markup=reply_markup, parse_mode="HTML"
+            )
+            return
         except Exception:
             pass
-    sent_id = None
-    if raw_markup:
-        sent_id = await _tg_send_message(uid, text, raw_markup)
-        if sent_id is None:
-            _ICON_API_BROKEN = True
-            log.warning("🔧 Telegram отверг icon_custom_emoji_id — кастом-иконки отключены (вернутся после рестарта)")
-    if sent_id is None:
-        if target_msg:
-            sent = await target_msg.answer(text, reply_markup=reply_markup)
-        else:
-            sent = await bot.send_message(uid, text, reply_markup=reply_markup)
-        sent_id = sent.message_id
-    home_msg[uid] = sent_id
-
-
-async def _send_rich(chat_id: int, text: str, markup, reply_to_message_id: int | None = None) -> int | None:
-    """Отправка с кастомными иконками на кнопках (raw Bot API 9.4) и фолбэком
-    на обычный путь aiogram при любой ошибке. Возвращает message_id или None."""
-    global _ICON_API_BROKEN
-    raw_markup = None if _ICON_API_BROKEN else _enrich_markup(markup)
-    sent_id = None
-    if raw_markup:
-        sent_id = await _tg_send_message(chat_id, text, raw_markup, reply_to_message_id=reply_to_message_id)
-        if sent_id is None:
-            _ICON_API_BROKEN = True
-            log.warning("🔧 Telegram отверг icon_custom_emoji_id — кастом-иконки отключены (вернутся после рестарта)")
-    if sent_id is None:
-        try:
-            sent = await bot.send_message(chat_id, text, reply_markup=markup,
-                                          reply_to_message_id=reply_to_message_id)
-            sent_id = sent.message_id
-        except Exception as e:
-            log.error(f"send rich fallback: {e}")
-            return None
-    return sent_id
-
-
-async def _edit_rich(chat_id: int, msg_id: int, text: str, markup) -> bool:
-    """Редактирование сообщения с кастомными иконками на кнопках + фолбэк aiogram."""
-    global _ICON_API_BROKEN
-    raw_markup = None if _ICON_API_BROKEN else _enrich_markup(markup)
-    if raw_markup:
-        if await _tg_edit_message(chat_id, msg_id, text, raw_markup):
-            return True
-        _ICON_API_BROKEN = True
-    try:
-        await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id,
-                                    reply_markup=markup)
-        return True
-    except Exception as e:
-        log.warning(f"edit rich fallback: {e}")
-        return False
-
-
+    if target_msg:
+        sent = await target_msg.answer(text, reply_markup=reply_markup)
+    else:
+        sent = await bot.send_message(uid, text, reply_markup=reply_markup)
+    home_msg[uid] = sent.message_id
 async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[int]:
     old_id = last_notify_msg.get(owner_id)
     if old_id:
@@ -408,33 +341,14 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
         except Exception:
             pass
         last_notify_msg.pop(owner_id, None)
-    sent_id = await _send_rich(owner_id, text, reply_markup)
-    if sent_id is None:
-        log.error(f"send notify to owner={owner_id}: failed")
+    try:
+        sent = await bot.send_message(owner_id, text, reply_markup=reply_markup)
+        last_notify_msg[owner_id] = sent.message_id
+        return sent.message_id
+    except Exception as e:
+        log.error(f"send notify to owner={owner_id}: {e}")
         return None
-    last_notify_msg[owner_id] = sent_id
-    return sent_id
-# Статический маппинг: нормализованный эмодзи (placeholder) -> custom_emoji_id из пака CPT_Emoji.
-# ID взяты из реального состава пака — иконки работают даже до загрузки пака и
-# независимо от placeholder'ов. Динамическая загрузка (setdefault) лишь дополняет
-# отсутствующие эмодзи, не перезаписывая эти ID.
-_CPT_EMOJI: dict[str, str] = {
-    # Текст меню
-    "👁": "5348461076503609002",   # Заголовок QUIET MOD
-    "✅": "5348191451341668809",   # Статус
-    "👁🗨": "5348183728990468765",  # Перехват
-    "🖼": "5348039074491939902",  # Архив
-    "🔍": "5345840270279724328",  # Поиск
-    "🧩": "5345957205059321624",  # ИИ
-    # Кнопки главного меню
-    "🛡": "5348129380474306311",  # Admin Suite
-    "👤": "5346136537123801643",  # Профиль
-    "❤": "5348356047373354143",  # Сохранённые
-    "🚫": "5348362704572664028",  # Очистить
-    "⭐": "5348446245981536690",  # Предложить
-    "⚙": "5346115646402869647",  # Подключение
-    "💰": "5348392971207194994",  # Поддержать проект
-}
+_CPT_EMOJI: dict[str, str] = {}  # нормализованный эмодзи (placeholder) -> custom_emoji_id из пака CPT_Emoji
 _CPT_EMOJI_LOADED = False
 
 
@@ -478,137 +392,106 @@ def pe(char: str, fallback: str | None = None) -> str:
     return fallback or char
 
 
-def _button_icon_id(text: str) -> str | None:
-    """Если текст кнопки начинается с эмодзи из пака — вернуть его custom_emoji_id."""
-    if not text:
-        return None
-    head = text.split(" ", 1)[0]
-    return _CPT_EMOJI.get(_norm_emoji(head))
-
-
-def _enrich_markup(markup) -> dict | None:
-    """Сериализует InlineKeyboardMarkup и вешает на кнопки icon_custom_emoji_id
-    из пака CPT_Emoji (эмодзи из начала текста переносится в иконку кнопки).
-
-    Возвращает dict для raw-отправки (Bot API 9.4) или None, если ни одной
-    иконки нет — тогда меню отправляется обычным путём aiogram."""
-    if not isinstance(markup, InlineKeyboardMarkup):
-        return None
-    data = markup.model_dump(exclude_none=True)
-    rows = data.get("inline_keyboard") or []
-    enriched = False
-    for row in rows:
-        for btn in row:
-            text = btn.get("text") or ""
-            icon_id = _button_icon_id(text)
-            if icon_id:
-                btn["icon_custom_emoji_id"] = icon_id
-                parts = text.split(" ", 1)
-                btn["text"] = parts[1] if len(parts) > 1 else ""
-                enriched = True
-    return data if enriched else None
-
-
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
-        rows.append([InlineKeyboardButton(text="🛡 Admin Suite", callback_data="adm")])
+        rows.append([InlineKeyboardButton(text="🛠️ Admin Suite", callback_data="adm")])
     rows.append([
-        InlineKeyboardButton(text="🖼 Архив",          callback_data="show_all"),
-        InlineKeyboardButton(text="👤 Профиль",        callback_data="stats"),
+        InlineKeyboardButton(text="🖼️ Архив",        callback_data="show_all"),
+        InlineKeyboardButton(text="👤 Профиль",      callback_data="stats"),
     ])
     rows.append([
-        InlineKeyboardButton(text="❤️ Сохранённые",   callback_data="show_saved"),
+        InlineKeyboardButton(text="🔖 Сохранённые",  callback_data="show_saved"),
     ])
     rows.append([InlineKeyboardButton(text="🔍 Поиск по архиву", callback_data="search")])
-    rows.append([InlineKeyboardButton(text="🧩 ИИ-консьерж — без лимитов", callback_data="ai_open")])
+    rows.append([InlineKeyboardButton(text="🔗 ИИ-консьерж — без лимитов", callback_data="ai_open")])
     rows.append([
-        InlineKeyboardButton(text="👥 Приглашения",    callback_data="referrals"),
-        InlineKeyboardButton(text="🚫 Очистить",       callback_data="clear_cache"),
+        InlineKeyboardButton(text="👥 Приглашения",  callback_data="referrals"),
+        InlineKeyboardButton(text="🧹 Очистить",     callback_data="clear_cache"),
     ])
     rows.append([
-        InlineKeyboardButton(text="⭐ Предложить",     callback_data="suggest_idea"),
-        InlineKeyboardButton(text="⚙️ Подключение",   callback_data="howto"),
+        InlineKeyboardButton(text="💡 Предложить",   callback_data="suggest_idea"),
+        InlineKeyboardButton(text="⚙️ Подключение",  callback_data="howto"),
     ])
-    rows.append([InlineKeyboardButton(text="💰 Поддержать проект", callback_data="donate")])
+    rows.append([InlineKeyboardButton(text="💎 Поддержать проект", callback_data="donate")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-def kb_back(target: str = "menu", label: str = "🏠 В меню") -> InlineKeyboardMarkup:
+def kb_back(target: str = "menu", label: str = "← В меню") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=label, callback_data=f"back_{target}")]
     ])
 def kb_notify(save_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📥 Сохранить ➩", callback_data=f"nsave_{save_id}"),
-            InlineKeyboardButton(text="🗑️ Удалить",     callback_data=f"ndel_{save_id}"),
+            InlineKeyboardButton(text="◆ Сохранить ➩", callback_data=f"nsave_{save_id}"),
+            InlineKeyboardButton(text="✕ Удалить",      callback_data=f"ndel_{save_id}"),
         ],
     ])
 def kb_ai() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔄 Сбросить диалог", callback_data="ai_clear"),
-            InlineKeyboardButton(text="🚪 Завершить",       callback_data="ai_exit"),
+            InlineKeyboardButton(text="✕ Сбросить диалог", callback_data="ai_clear"),
+            InlineKeyboardButton(text="← Завершить",       callback_data="ai_exit"),
         ],
     ])
 def kb_donate() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💎 15 ⭐", callback_data="pay_donate_15")],
-        [InlineKeyboardButton(text="💎 30 ⭐", callback_data="pay_donate_30")],
-        [InlineKeyboardButton(text="💎 50 ⭐", callback_data="pay_donate_50")],
-        [InlineKeyboardButton(text="🏠 В меню", callback_data="back_menu")],
+        [InlineKeyboardButton(text="⟡ 15 ⭐", callback_data="pay_donate_15")],
+        [InlineKeyboardButton(text="⟡ 30 ⭐", callback_data="pay_donate_30")],
+        [InlineKeyboardButton(text="⟡ 50 ⭐", callback_data="pay_donate_50")],
+        [InlineKeyboardButton(text="← В меню", callback_data="back_menu")],
     ])
 CMD_FEATURES: dict[str, dict] = {
     "ai": {
-        "title": "✨ .ai",
+        "title": "◇ .ai",
         "desc": "Задай вопрос — ИИ ответит. Работает с текстом и фото.",
         "usage": ".ai твой вопрос",
         "example": ".ai объясни теорию относительности",
         "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах."
     },
     "search": {
-        "title": "🔍 .search",
+        "title": "◇ .search",
         "desc": "Поиск в интернете через DuckDuckGo + ИИ.",
         "usage": ".search запрос",
         "example": ".search курс доллара сегодня",
         "note": "Погода: .search погода в Лондоне"
     },
     "spam": {
-        "title": "📣 .spam",
+        "title": "◇ .spam",
         "desc": "Отправляет N одинаковых сообщений в чат.",
         "usage": ".spam текст число",
         "example": ".spam Привет 10",
         "note": ".spam stop — остановить"
     },
     "mute": {
-        "title": "🔇 .mute",
+        "title": "◇ .mute",
         "desc": "Удаляет все сообщения от собеседника в личке.",
         "usage": ".mute — включить",
         "example": ".unmute — выключить",
         "note": "Только для личных чатов (Business)"
     },
     "afk": {
-        "title": "🌙 .afk",
+        "title": "◇ .afk",
         "desc": "Автоответчик: «я не в сети».",
         "usage": ".afk [заметка]",
         "example": ".afk вернусь через час",
         "note": "Работает в ЛС с ботом и бизнес-чатах · .unafk — выключить"
     },
     "code": {
-        "title": "💻 .code",
+        "title": "◇ .code",
         "desc": "Всё, что пишешь — форматируется как код.",
         "usage": ".code — включить",
         "example": ".uncode — выключить",
         "note": "Текст в <pre><code>...</code></pre>"
     },
     "wbl": {
-        "title": "🚫 .wbl",
+        "title": "◇ .wbl",
         "desc": "Удаляет мат и флуд от собеседника.",
         "usage": ".wbl — включить",
         "example": ".unwbl — выключить",
         "note": "Защита от мата, обфускации, флуда"
     },
     "price": {
-        "title": "💰 .price",
+        "title": "◇ .price",
         "desc": "Оценка стоимости юзернейма (как на Fragment).",
         "usage": ".price @username",
         "example": ".price @alimtona",
@@ -636,49 +519,49 @@ CMD_FEATURES: dict[str, dict] = {
         "note": "Индикатор от твоего имени · стелс (команда удаляется)"
     },
     "bold": {
-        "title": "✒️ .bold",
+        "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
         "usage": ".bold текст",
         "example": ".bold важное сообщение",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "italic": {
-        "title": "🖋️ .italic",
+        "title": "◆ .italic",
         "desc": "Курсив — наклонный текст.",
         "usage": ".italic текст",
         "example": ".italic нежный акцент",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "mono": {
-        "title": "⌨️ .mono",
+        "title": "◆ .mono",
         "desc": "Моноширинный шрифт — как код.",
         "usage": ".mono текст",
         "example": ".mono print('hello')",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "line": {
-        "title": "📏 .line",
+        "title": "◆ .line",
         "desc": "Подчёркнутый текст.",
         "usage": ".line текст",
         "example": ".line подчёркнуто",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "crossed": {
-        "title": "✂️ .crossed",
+        "title": "◆ .crossed",
         "desc": "Зачёркнутый текст.",
         "usage": ".crossed текст",
         "example": ".crossed старый вариант",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "hidden": {
-        "title": "🙈 .hidden",
+        "title": "◆ .hidden",
         "desc": "Скрытый текст — спойлер, виден по тапу.",
         "usage": ".hidden текст",
         "example": ".hidden ответ на загадку",
         "note": "Работает в группах и личных чатах (Business)"
     },
     "quote": {
-        "title": "💬 .quote",
+        "title": "◆ .quote",
         "desc": "Цитата — текст в блоке цитирования.",
         "usage": ".quote текст",
         "example": ".quote знание — сила",
@@ -699,12 +582,12 @@ def kb_cmd() -> InlineKeyboardMarkup:
 
 def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="👥 Пользователи",   callback_data="adm_users")],
-        [InlineKeyboardButton(text="📊 Статистика",     callback_data="adm_stats")],
-        [InlineKeyboardButton(text="💡 Предложения",    callback_data="adm_ideas")],
-        [InlineKeyboardButton(text="📢 Сообщение всем", callback_data="adm_broadcast")],
-        [InlineKeyboardButton(text="📣 По группам/каналам", callback_data="adm_broadcast_groups")],
-        [InlineKeyboardButton(text="🏠 В меню",         callback_data="back_menu")],
+        [InlineKeyboardButton(text="◆ Пользователи",   callback_data="adm_users")],
+        [InlineKeyboardButton(text="◆ Статистика",     callback_data="adm_stats")],
+        [InlineKeyboardButton(text="✦ Предложения",    callback_data="adm_ideas")],
+        [InlineKeyboardButton(text="▤ Сообщение всем", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="▤ По группам/каналам", callback_data="adm_broadcast_groups")],
+        [InlineKeyboardButton(text="← В меню",         callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (
     "Ты сдержанный, элегантный ИИ-консьерж внутри Telegram-бота Quiet Mod. "

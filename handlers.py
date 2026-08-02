@@ -45,8 +45,6 @@ from functions import (
     _wbl_should_delete,
     _ddg_search,
     _edit_ai_html,
-    _edit_rich,
-    _enrich_markup,
     _extract_city,
     _get_image_base64,
     _get_weather,
@@ -57,7 +55,6 @@ from functions import (
     _price_estimate,
     _reply_ai_html,
     _send_notify,
-    _send_rich,
     _show_home,
     pe,
 )
@@ -258,15 +255,14 @@ async def cmd_start(msg: Message, state: FSMContext):
         "<b>удалённые и изменённые</b> сообщения\n"
         "появятся здесь раньше, чем их забудут.\n\n"
         f"<code>{LINE}</code>\n"
-        f"{pe('✅')} Статус       <b>Свободен · без лимитов</b>\n"
         f"{pe('🖼️')} Архив        <b>безлимит</b>\n"
         f"{pe('🔍')} Поиск        <b>включён</b>\n"
-        f"{pe('🧩')} ИИ           <b>без лимитов</b>\n"
-        f"{pe('🛡')} Mute · WBL   <b>в бизнес-чатах</b>\n"
-        f"{pe('👁🗨')} Перехват     <b>безлимит</b>\n"
+        f"{pe('🔗')} ИИ           <b>без лимитов</b>\n"
+        f"{pe('👁️‍🗨️')} Mute · WBL   <b>в бизнес-чатах</b>\n"
+        f"{pe('👁')} Перехват     <b>безлимит</b>\n"
         f"{pe('🔔')} Уведомления  <b>об удалённых и изменённых</b>\n"
         f"<code>{LINE}</code>\n\n"
-        f"{pe('🔗')} Пригласить:\n"
+        f"🔗 Пригласить:\n"
         f"<code>{ref_link(uid)}</code>"
     )
     await _show_home(uid, home_text_full, kb_main(uid), msg)
@@ -2295,7 +2291,7 @@ async def cb_show_saved(call: CallbackQuery):
             "Пусто.\n\n"
             "Когда придёт уведомление об удалённом\n"
             "или изменённом сообщении — нажми\n"
-            "<b>«📥 Сохранить»</b> и оно появится здесь.\n\n"
+            "<b>«◆ Сохранить ➩»</b> и оно появится здесь.\n\n"
             "◇ Хранятся <b>7 дней</b>, затем удаляются автоматически.",
             reply_markup=kb_back("menu"),
         )
@@ -2870,12 +2866,10 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
 
 @dp.message(F.text.regexp(r"(?i)^\.cmd$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
 async def on_cmd(msg: Message):
-    await _send_rich(
-        msg.chat.id,
+    await msg.answer(
         f"◆ <b>QUIET MOD</b> 👁️ — список команд\n{LINE}\n\n"
         "Выбери команду:",
-        kb_cmd(),
-        reply_to_message_id=msg.message_id,
+        reply_markup=kb_cmd(),
     )
 
 @dp.business_message(F.text.regexp(r"(?i)^\.cmd$"))
@@ -2884,15 +2878,10 @@ async def on_cmd_business(msg: Message):
         msg.business_connection_id, msg.chat.id, msg.message_id,
         f"◆ <b>QUIET MOD</b> 👁️ — список команд"
     )
-    cmd_markup = _enrich_markup(kb_cmd())
-    if cmd_markup is None:
-        cmd_markup = kb_cmd().model_dump(exclude_none=True)
     await _business_send_message_ex(
         msg.business_connection_id, msg.chat.id,
         f"◆ <b>QUIET MOD</b> 👁️ — список команд\n{LINE}\n\n"
-        "Выбери команду:",
-        reply_markup=cmd_markup,
-        parse_mode="HTML",
+        "Выбери команду:"
     )
 
 @dp.callback_query(F.data.startswith("cmd_info_"))
@@ -2918,11 +2907,10 @@ async def cb_cmd_info(call: CallbackQuery):
 @dp.callback_query(F.data == "cmd_back")
 async def cb_cmd_back(call: CallbackQuery):
     await call.answer()
-    await _edit_rich(
-        call.message.chat.id, call.message.message_id,
-        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n{LINE}\n\n"
-        "Выбери команду:",
-        kb_cmd(),
+    await call.message.edit_text(
+        f"◆ <b>QUIET MOD</b> 👁️ — список функций\n{LINE}\n\n"
+        "Выбери интересующую функцию:",
+        reply_markup=kb_cmd(),
     )
 
 @dp.callback_query(F.data == "cmd_close")
@@ -2984,7 +2972,6 @@ DEVLOG = (
     f"{LINE}\n\n"
     "Привет! Это краткий обзор того, что умеет бот.\n"
     "Если ты здесь впервые — добро пожаловать в тишину.\n\n"
-    "✨ Меню теперь с премиум-эмодзи и кастомными иконками на кнопках.\n\n"
     f"{LINE}\n"
     "▲ <b>ПЕРЕХВАТ СООБЩЕНИЙ</b>\n\n"
     "✕ <b>Удалённые сообщения</b>\n"
