@@ -393,6 +393,43 @@ async def cb_unafk_btn(call: CallbackQuery):
         ),
         reply_markup={"inline_keyboard": []},
     )
+@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.afk(\s+.*)?$"), F.chat.type == "private")
+async def on_afk_private(msg: Message):
+    """Включить AFK из ЛС с ботом: автоответ во всех бизнес-чатах владельца."""
+    if not msg.from_user:
+        return
+    uid = msg.from_user.id
+    raw_text = (msg.text or msg.caption or "").strip()
+    note = raw_text[4:].strip() if len(raw_text) >= 4 else ""
+    user_afk[uid] = {
+        "owner_id": uid,
+        "started_at": datetime.now(timezone.utc),
+        "note": note,
+    }
+    business_afk_last_reply.clear()
+    note_line = f"\n◇ <b>Заметка:</b> {html_escape(note)}" if note else ""
+    await msg.answer(
+        f"🌙 <b>AFK включён</b>\n"
+        f"<code>{LINE}</code>\n\n"
+        "◇ Ты <b>не в сети</b>\n"
+        "◇ Всем, кто тебе напишет в бизнес-чатах,\n"
+        "   придёт автоответ"
+        f"{note_line}\n\n"
+        f"<code>{LINE}</code>\n"
+        "◇ Выключить: <code>.unafk</code>\n\n"
+        f"— 👁️ @{BOT_USERNAME}"
+    )
+@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.unafk$"), F.chat.type == "private")
+async def on_unafk_private(msg: Message):
+    """Выключить AFK из ЛС с ботом (сбрасывает AFK и во всех бизнес-чатах)."""
+    if not msg.from_user:
+        return
+    uid = msg.from_user.id
+    user_afk.pop(uid, None)
+    for conn_id in [c for c, a in business_afk.items() if a.get("owner_id") == uid]:
+        business_afk.pop(conn_id, None)
+    business_afk_last_reply.clear()
+    await msg.answer("◇ AFK выключен")
 @dp.business_message(F.text.regexp(r"(?i)^\.code$"))
 async def on_code_inline(msg: Message):
     if not msg.business_connection_id:
@@ -898,7 +935,7 @@ async def on_business_msg(msg: Message):
             await asyncio.sleep(int(retry_after))
             await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         return
-    afk = business_afk.get(msg.business_connection_id)
+    afk = business_afk.get(msg.business_connection_id) or user_afk.get(owner_id)
     if (
         getattr(msg.chat, "type", None) == "private"
         and msg.from_user

@@ -48,6 +48,7 @@ business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
 business_muted_chats: set[tuple[str, int]] = set()
 business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
+user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner_id, started_at, note}
 business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
@@ -437,7 +438,7 @@ CMD_FEATURES: dict[str, dict] = {
         "desc": "Автоответчик: «я не в сети».",
         "usage": ".afk [заметка]",
         "example": ".afk вернусь через час",
-        "note": ".unafk — выключить"
+        "note": "Работает в ЛС с ботом и бизнес-чатах · .unafk — выключить"
     },
     "code": {
         "title": "◇ .code",
