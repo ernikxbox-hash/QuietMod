@@ -1406,14 +1406,13 @@ async def cb_howto_profile(call: CallbackQuery):
         f"{LINE}\n\n"
         "Всего <b>3 шага</b> — и бот следит за тишиной:\n\n"
         "1️⃣ Нажми кнопку <b>«Скопировать»</b> ниже —\n"
-        "   юзернейм бота окажется в буфере обмена\n\n"
+        "   бот покажет юзернейм для копирования\n\n"
         "2️⃣ Нажми кнопку <b>«Подключить»</b> —\n"
         "   откроются настройки Telegram\n\n"
         "3️⃣ Внизу найди <b>Автоматизация чатов</b> ✦\n"
-        "   и вставь скопированный юзернейм:\n"
-        f"   <code>@{BOT_USERNAME}</code>\n\n"
+        "   и вставь скопированный юзернейм\n\n"
         f"{LINE}\n"
-        "◇ Нужен <b>Telegram Business</b> (платная подписка)\n"
+        "✔ Подключение доступно <b>всем</b>\n"
         "✔ После подключения удалённые и изменённые\n"
         "   сообщения будут приходить тебе мгновенно\n\n"
         "◇ <i>Свои сообщения бот не трогает — только чужие.</i>",
@@ -1425,7 +1424,21 @@ async def cb_howto_profile(call: CallbackQuery):
     )
 @dp.callback_query(F.data == "copy_bot_username")
 async def cb_copy_bot_username(call: CallbackQuery):
-    await call.answer(f"@{BOT_USERNAME}", show_alert=False)
+    await call.answer()
+    await call.message.edit_text(
+        f"📋 <b>Юзернейм бота для копирования:</b>\n"
+        f"{LINE}\n\n"
+        f"<code>@{BOT_USERNAME}</code>\n\n"
+        f"{LINE}\n"
+        "👆 <i>Нажми и удерживай юзернейм выше —\n"
+        "появится меню «Копировать»</i>\n\n"
+        "Затем: <b>«Подключить»</b> → внизу\n"
+        "<b>Автоматизация чатов</b> → вставить",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 Подключить", url="tg://settings/edit")],
+            [InlineKeyboardButton(text="← Назад", callback_data="howto_profile")],
+        ]),
+    )
 @dp.callback_query(F.data == "howto_group")
 async def cb_howto_group(call: CallbackQuery):
     await call.answer()
