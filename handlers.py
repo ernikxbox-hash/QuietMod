@@ -1400,22 +1400,30 @@ async def cb_howto(call: CallbackQuery):
 async def cb_howto_profile(call: CallbackQuery):
     await call.answer()
     await call.message.edit_text(
-        f"◆ <b>Подключение к профилю (Business)</b>\n{LINE}\n"
-        "Для этого нужен <b>Telegram Business</b> (платная подписка).\n\n"
-        "1️⃣ Открой <b>Настройки Telegram</b>\n"
-        "2️⃣ Перейди в <b>Telegram Business</b>\n"
-        "3️⃣ Нажми <b>Автоматизация чатов</b>\n"
-        f"4️⃣ Выбери <code>@{BOT_USERNAME}</code>\n"
-        "5️⃣ Включи <b>Доступ к сообщениям</b>\n"
+        f"◆ <b>Подключение к профилю</b> 👁️\n"
+        f"{LINE}\n\n"
+        "Всего <b>3 шага</b> — и бот следит за тишиной:\n\n"
+        "1️⃣ Нажми кнопку <b>«Скопировать»</b> ниже —\n"
+        "   юзернейм бота окажется в буфере обмена\n\n"
+        "2️⃣ Нажми кнопку <b>«Подключить»</b> —\n"
+        "   откроются настройки Telegram\n\n"
+        "3️⃣ Внизу найди <b>Автоматизация чатов</b> ✦\n"
+        "   и вставь скопированный юзернейм:\n"
+        f"   <code>@{BOT_USERNAME}</code>\n\n"
         f"{LINE}\n"
-        "✔ Бот будет тихо перехватывать <b>все</b> удалённые\n"
-        "и изменённые сообщения в твоих личных чатах.\n\n"
-        "◇ <i>Твои собственные удалённые сообщения\n"
-        "бот не присылает — только чужие.</i>",
+        "◇ Нужен <b>Telegram Business</b> (платная подписка)\n"
+        "✔ После подключения удалённые и изменённые\n"
+        "   сообщения будут приходить тебе мгновенно\n\n"
+        "◇ <i>Свои сообщения бот не трогает — только чужие.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Скопировать", callback_data="copy_bot_username")],
+            [InlineKeyboardButton(text="🔗 Подключить", url="tg://settings/edit")],
             [InlineKeyboardButton(text="← Назад", callback_data="howto")],
         ]),
     )
+@dp.callback_query(F.data == "copy_bot_username")
+async def cb_copy_bot_username(call: CallbackQuery):
+    await call.answer(f"@{BOT_USERNAME}", show_alert=False)
 @dp.callback_query(F.data == "howto_group")
 async def cb_howto_group(call: CallbackQuery):
     await call.answer()
