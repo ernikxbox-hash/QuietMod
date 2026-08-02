@@ -397,14 +397,14 @@ def kb_main(uid: int) -> InlineKeyboardMarkup:
     if uid == ADMIN_ID:
         rows.append([InlineKeyboardButton(text="🛠️ Admin Suite", callback_data="adm")])
     rows.append([
-        InlineKeyboardButton(text="📂 Архив",        callback_data="show_all"),
+        InlineKeyboardButton(text="🖼️ Архив",        callback_data="show_all"),
         InlineKeyboardButton(text="👤 Профиль",      callback_data="stats"),
     ])
     rows.append([
         InlineKeyboardButton(text="🔖 Сохранённые",  callback_data="show_saved"),
     ])
     rows.append([InlineKeyboardButton(text="🔍 Поиск по архиву", callback_data="search")])
-    rows.append([InlineKeyboardButton(text="✨ ИИ-консьерж — без лимитов", callback_data="ai_open")])
+    rows.append([InlineKeyboardButton(text="🔗 ИИ-консьерж — без лимитов", callback_data="ai_open")])
     rows.append([
         InlineKeyboardButton(text="👥 Приглашения",  callback_data="referrals"),
         InlineKeyboardButton(text="🧹 Очистить",     callback_data="clear_cache"),
