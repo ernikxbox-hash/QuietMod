@@ -38,7 +38,11 @@ from core import (
     bot,
     log,
 )
-from business_api import _business_edit_message_ex
+from business_api import (
+    _business_edit_message_ex,
+    _tg_edit_message,
+    _tg_send_message,
+)
 
 ai_history: dict[int, list] = {}
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
@@ -317,22 +321,44 @@ def home_text() -> str:
         f"◇ ИИ           <b>без лимитов</b>\n"
         f"<code>{LINE}</code>"
     )
+_ICON_API_BROKEN = False  # Telegram отверг icon_custom_emoji_id (напр. нет Premium у владельца) — иконки не пробуем снова
+
+
 async def _show_home(uid: int, text: str, reply_markup, target_msg: "Message | None" = None):
+    """Показывает/обновляет главное меню. Если в паке CPT_Emoji есть эмодзи
+    для кнопок — ставим кастомные иконки (icon_custom_emoji_id, Bot API 9.4)
+    через raw-запрос; при любой ошибке бесшовно откатываемся на обычный путь
+    и запоминаем отказ, чтобы не долбить API на каждое обновление."""
+    global _ICON_API_BROKEN
+    raw_markup = None if _ICON_API_BROKEN else _enrich_markup(reply_markup)
     existing_id = home_msg.get(uid)
     if existing_id and target_msg:
         try:
-            await bot.edit_message_text(
-                text, chat_id=uid, message_id=existing_id,
-                reply_markup=reply_markup, parse_mode="HTML"
-            )
-            return
+            if raw_markup:
+                ok = await _tg_edit_message(uid, existing_id, text, raw_markup)
+            else:
+                await bot.edit_message_text(
+                    text, chat_id=uid, message_id=existing_id,
+                    reply_markup=reply_markup, parse_mode="HTML"
+                )
+                ok = True
+            if ok:
+                return
         except Exception:
             pass
-    if target_msg:
-        sent = await target_msg.answer(text, reply_markup=reply_markup)
-    else:
-        sent = await bot.send_message(uid, text, reply_markup=reply_markup)
-    home_msg[uid] = sent.message_id
+    sent_id = None
+    if raw_markup:
+        sent_id = await _tg_send_message(uid, text, raw_markup)
+        if sent_id is None:
+            _ICON_API_BROKEN = True
+            log.warning("🔧 Telegram отверг icon_custom_emoji_id — кастом-иконки отключены (вернутся после рестарта)")
+    if sent_id is None:
+        if target_msg:
+            sent = await target_msg.answer(text, reply_markup=reply_markup)
+        else:
+            sent = await bot.send_message(uid, text, reply_markup=reply_markup)
+        sent_id = sent.message_id
+    home_msg[uid] = sent_id
 async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[int]:
     old_id = last_notify_msg.get(owner_id)
     if old_id:
@@ -392,6 +418,37 @@ def pe(char: str, fallback: str | None = None) -> str:
     return fallback or char
 
 
+def _button_icon_id(text: str) -> str | None:
+    """Если текст кнопки начинается с эмодзи из пака — вернуть его custom_emoji_id."""
+    if not text:
+        return None
+    head = text.split(" ", 1)[0]
+    return _CPT_EMOJI.get(_norm_emoji(head))
+
+
+def _enrich_markup(markup) -> dict | None:
+    """Сериализует InlineKeyboardMarkup и вешает на кнопки icon_custom_emoji_id
+    из пака CPT_Emoji (эмодзи из начала текста переносится в иконку кнопки).
+
+    Возвращает dict для raw-отправки (Bot API 9.4) или None, если ни одной
+    иконки нет — тогда меню отправляется обычным путём aiogram."""
+    if not isinstance(markup, InlineKeyboardMarkup):
+        return None
+    data = markup.model_dump(exclude_none=True)
+    rows = data.get("inline_keyboard") or []
+    enriched = False
+    for row in rows:
+        for btn in row:
+            text = btn.get("text") or ""
+            icon_id = _button_icon_id(text)
+            if icon_id:
+                btn["icon_custom_emoji_id"] = icon_id
+                parts = text.split(" ", 1)
+                btn["text"] = parts[1] if len(parts) > 1 else ""
+                enriched = True
+    return data if enriched else None
+
+
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
@@ -401,16 +458,16 @@ def kb_main(uid: int) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="👤 Профиль",      callback_data="stats"),
     ])
     rows.append([
-        InlineKeyboardButton(text="🔖 Сохранённые",  callback_data="show_saved"),
+        InlineKeyboardButton(text="🤍 Сохранённые",  callback_data="show_saved"),
     ])
     rows.append([InlineKeyboardButton(text="🔍 Поиск по архиву", callback_data="search")])
     rows.append([InlineKeyboardButton(text="🔗 ИИ-консьерж — без лимитов", callback_data="ai_open")])
     rows.append([
         InlineKeyboardButton(text="👥 Приглашения",  callback_data="referrals"),
-        InlineKeyboardButton(text="🧹 Очистить",     callback_data="clear_cache"),
+        InlineKeyboardButton(text="🗑️ Очистить",     callback_data="clear_cache"),
     ])
     rows.append([
-        InlineKeyboardButton(text="💡 Предложить",   callback_data="suggest_idea"),
+        InlineKeyboardButton(text="✨ Предложить",   callback_data="suggest_idea"),
         InlineKeyboardButton(text="⚙️ Подключение",  callback_data="howto"),
     ])
     rows.append([InlineKeyboardButton(text="💎 Поддержать проект", callback_data="donate")])

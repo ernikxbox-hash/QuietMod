@@ -262,7 +262,7 @@ async def cmd_start(msg: Message, state: FSMContext):
         f"{pe('👁')} Перехват     <b>безлимит</b>\n"
         f"{pe('🔔')} Уведомления  <b>об удалённых и изменённых</b>\n"
         f"<code>{LINE}</code>\n\n"
-        f"🔗 Пригласить:\n"
+        f"{pe('🔗')} Пригласить:\n"
         f"<code>{ref_link(uid)}</code>"
     )
     await _show_home(uid, home_text_full, kb_main(uid), msg)
