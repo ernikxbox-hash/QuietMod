@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import signal
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import aiohttp
 from ddgs import DDGS
@@ -31,9 +31,7 @@ from core import (
     BOT_TOKEN,
     ADMIN_ID,
     BRAND_NAME,
-    DONOR_BADGE_MIN,
     GROQ_API_KEYS,
-    PREMIUM_MONTHLY_STARS,
     S,
     bot,
     dp,
@@ -104,7 +102,6 @@ async def cmd_start(msg: Message, state: FSMContext):
             )
         except Exception:
             pass
-    is_prem = await db.is_premium(uid)
     home_text_full = (
         f"◆ <b>QUIET MOD</b> 👁️\n"
         f"<code>{LINE}</code>\n\n"
@@ -113,15 +110,16 @@ async def cmd_start(msg: Message, state: FSMContext):
         "<b>удалённые и изменённые</b> сообщения\n"
         "появятся здесь раньше, чем их забудут.\n\n"
         f"<code>{LINE}</code>\n"
-        f"◇ Статус       <b>{'VIP-статус' if is_prem else 'Базовый доступ'}</b>\n"
+        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
         f"◇ Перехват     <b>безлимит</b>\n"
-        f"◇ Архив        <b>{'200' if is_prem else '20'} записей</b>\n"
+        f"◇ Архив        <b>безлимит</b>\n"
+        f"◇ Поиск        <b>включён</b>\n"
         f"◇ ИИ           <b>без лимитов</b>\n"
         f"<code>{LINE}</code>\n\n"
         f"◇ Пригласить:\n"
         f"<code>{ref_link(uid)}</code>"
     )
-    await _show_home(uid, home_text_full, kb_main(uid, is_prem), msg)
+    await _show_home(uid, home_text_full, kb_main(uid), msg)
 @dp.message(Command("admin"))
 async def cmd_admin(msg: Message):
     if msg.from_user.id != ADMIN_ID:
@@ -1324,18 +1322,14 @@ async def cb_ai_clear(call: CallbackQuery):
 @dp.callback_query(F.data == "ai_exit")
 async def cb_ai_exit(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    uid     = call.from_user.id
-    is_prem = await db.is_premium(uid)
+    uid = call.from_user.id
     await call.answer()
     await call.message.edit_text(
-        home_text(is_prem),
-        reply_markup=kb_main(uid, is_prem),
+        home_text(),
+        reply_markup=kb_main(uid),
     )
 @dp.callback_query(F.data == "search")
 async def cb_search(call: CallbackQuery, state: FSMContext):
-    if not await db.is_premium(call.from_user.id):
-        await call.answer("◈ Поиск — только для VIP", show_alert=True)
-        return
     await state.set_state(S.ai_search)
     await call.answer()
     await call.message.edit_text(
@@ -1403,12 +1397,11 @@ async def cb_save_forever(call: CallbackQuery):
 @dp.callback_query(F.data.startswith("back_"))
 async def cb_back(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    uid     = call.from_user.id
-    is_prem = await db.is_premium(uid)
+    uid = call.from_user.id
     await call.answer()
     await call.message.edit_text(
-        home_text(is_prem),
-        reply_markup=kb_main(uid, is_prem),
+        home_text(),
+        reply_markup=kb_main(uid),
     )
 @dp.callback_query(F.data == "noop")
 async def cb_noop(call: CallbackQuery):
@@ -1417,7 +1410,6 @@ async def cb_noop(call: CallbackQuery):
 async def cb_notify_save(call: CallbackQuery):
     save_id = int(call.data.split("_")[1])
     uid     = call.from_user.id
-    is_prem = await db.is_premium(uid)
     await call.answer("◆ Сохранено на 7 дней", show_alert=False)
     try:
         await call.message.delete()
@@ -1427,19 +1419,18 @@ async def cb_notify_save(call: CallbackQuery):
     if existing_id:
         try:
             await bot.edit_message_text(
-                home_text(is_prem), chat_id=uid, message_id=existing_id,
-                reply_markup=kb_main(uid, is_prem), parse_mode="HTML"
+                home_text(), chat_id=uid, message_id=existing_id,
+                reply_markup=kb_main(uid), parse_mode="HTML"
             )
             return
         except Exception:
             pass
-    sent = await bot.send_message(uid, home_text(is_prem), reply_markup=kb_main(uid, is_prem))
+    sent = await bot.send_message(uid, home_text(), reply_markup=kb_main(uid))
     home_msg[uid] = sent.message_id
 @dp.callback_query(F.data.startswith("ndel_"))
 async def cb_notify_del(call: CallbackQuery):
     save_id = int(call.data.split("_")[1])
     uid     = call.from_user.id
-    is_prem = await db.is_premium(uid)
     await db.delete_saved_message(save_id)
     await call.answer("✕ Удалено", show_alert=False)
     try:
@@ -1450,13 +1441,13 @@ async def cb_notify_del(call: CallbackQuery):
     if existing_id:
         try:
             await bot.edit_message_text(
-                home_text(is_prem), chat_id=uid, message_id=existing_id,
-                reply_markup=kb_main(uid, is_prem), parse_mode="HTML"
+                home_text(), chat_id=uid, message_id=existing_id,
+                reply_markup=kb_main(uid), parse_mode="HTML"
             )
             return
         except Exception:
             pass
-    sent = await bot.send_message(uid, home_text(is_prem), reply_markup=kb_main(uid, is_prem))
+    sent = await bot.send_message(uid, home_text(), reply_markup=kb_main(uid))
     home_msg[uid] = sent.message_id
 @dp.callback_query(F.data == "show_saved")
 async def cb_show_saved(call: CallbackQuery):
@@ -1516,10 +1507,9 @@ async def cb_clear_saved(call: CallbackQuery):
     for item in items:
         await db.delete_saved_message(item["id"])
     await call.answer("✕ Все удалены", show_alert=True)
-    is_prem = await db.is_premium(uid)
     await call.message.edit_text(
-        home_text(is_prem),
-        reply_markup=kb_main(uid, is_prem),
+        home_text(),
+        reply_markup=kb_main(uid),
     )
 @dp.callback_query(F.data == "howto")
 async def cb_howto(call: CallbackQuery):
@@ -1611,22 +1601,19 @@ async def cb_referrals(call: CallbackQuery):
     )
 @dp.callback_query(F.data == "stats")
 async def cb_stats(call: CallbackQuery):
-    uid     = call.from_user.id
-    is_prem = await db.is_premium(uid)
-    cached  = await db.count_messages(uid)
-    refs    = await db.count_referrals(uid)
-    user    = await db.get_user(uid)
-    badge   = premium_badge(is_prem, bool(user and user.get("donor_badge")))
-    prem_txt = user["premium_until"] if user and user.get("premium_until") else "нет"
+    uid    = call.from_user.id
+    cached = await db.count_messages(uid)
+    refs   = await db.count_referrals(uid)
     await call.answer()
     await call.message.edit_text(
-        f"◆ <b>Твой профиль</b> {badge}\n{LINE}\n"
+        f"◆ <b>Твой профиль</b>\n{LINE}\n"
         f"◇ В архиве:     <b>{cached}</b>\n"
         f"◇ Приглашено:   <b>{refs}</b>\n"
+        f"◇ Перехват:     <b>безлимит</b>\n"
+        f"◇ Поиск:        <b>включён</b>\n"
         f"◇ ИИ:           <b>безлимит</b>\n"
-        f"◈ VIP до:        <b>{prem_txt}</b>\n"
         f"{LINE}\n"
-        f"Лимит архива: {'200 (VIP)' if is_prem else '20 (базовый)'}",
+        f"Quiet Mod — бесплатно и без лимитов. Навсегда.",
         reply_markup=kb_back("menu"),
     )
 @dp.callback_query(F.data == "clear_cache")
@@ -1640,15 +1627,13 @@ async def cb_show_all(call: CallbackQuery):
     if not messages:
         await call.answer("▣ Архив пуст", show_alert=True)
         return
-    is_prem = await db.is_premium(uid)
     lines = []
     for m in messages:
         preview = (m["text"][:40] + "…") if len(m["text"] or "") > 40 else (m["text"] or m["media_type"])
         lines.append(f"◆ <b>{m['from_name']}</b>  {m['date']}\n   {preview}")
     await call.answer()
     archive_rows = []
-    if is_prem:
-        archive_rows.append([InlineKeyboardButton(text="◐ Поиск по архиву", callback_data="search")])
+    archive_rows.append([InlineKeyboardButton(text="◐ Поиск по архиву", callback_data="search")])
     archive_rows.append([InlineKeyboardButton(text="✕ Очистить архив", callback_data="clear_cache")])
     archive_rows.append([InlineKeyboardButton(text="← В меню", callback_data="back_menu")])
     await call.message.edit_text(
@@ -1657,59 +1642,52 @@ async def cb_show_all(call: CallbackQuery):
     )
 @dp.callback_query(F.data.startswith("ack_"))
 async def cb_ack(call: CallbackQuery):
-    uid     = call.from_user.id
-    is_prem = await db.is_premium(uid)
+    uid = call.from_user.id
     await call.answer("✔ Принято")
     await call.message.edit_text(
-        home_text(is_prem),
-        reply_markup=kb_main(uid, is_prem),
+        home_text(),
+        reply_markup=kb_main(uid),
     )
 @dp.callback_query(F.data.startswith("del_"))
 async def cb_del(call: CallbackQuery):
     msg_id  = int(call.data.split("_")[1])
     uid     = call.from_user.id
-    is_prem = await db.is_premium(uid)
     await db.delete_message(uid, msg_id)
     await call.answer("✕ Удалено из архива")
     await call.message.edit_text(
-        home_text(is_prem),
-        reply_markup=kb_main(uid, is_prem),
+        home_text(),
+        reply_markup=kb_main(uid),
     )
-@dp.callback_query(F.data == "premium_info")
-async def cb_premium_info(call: CallbackQuery):
+@dp.callback_query(F.data == "donate")
+async def cb_donate(call: CallbackQuery):
     await call.answer()
     await call.message.edit_text(
-        f"◈ <b>VIP — что даёт?</b>\n{LINE}\n"
-        "◇ <b>Бесплатно навсегда:</b>\n"
-        "  • Перехват удалённых и изменённых — безлимит\n"
-        "  • Архив: 20 записей\n"
-        "  • ИИ: безлимитно\n\n"
-        "◈ <b>VIP · 50⭐/месяц:</b>\n"
-        "  • Архив: 200 записей\n"
-        "  • Поиск по всему архиву\n\n"
-        "◇ <b>Вклад 100⭐+ (единоразово):</b>\n"
-        "  • Метка в профиле\n"
-        "  • +30 дней VIP в подарок\n"
-        "  • Моя искренняя благодарность",
-        reply_markup=kb_premium(),
+        f"⟡ <b>Поддержать развитие</b>\n{LINE}\n\n"
+        "Quiet Mod бесплатен для всех —\n"
+        "без лимитов, подписок и VIP. Навсегда.\n\n"
+        "Мы никого ни о чём не просим.\n"
+        "Но если у тебя есть немного лишнего —\n"
+        "небольшой вклад очень поможет: серверы,\n"
+        "ИИ и новые возможности.\n\n"
+        "◇ <b>На что идут звёзды:</b>\n"
+        "  • Стабильная работа 24/7\n"
+        "  • Оплата ИИ для всех без лимитов\n"
+        "  • Новые фичи и улучшения\n\n"
+        "Спасибо, что ты с нами 👁️",
+        reply_markup=kb_donate(),
     )
 @dp.callback_query(F.data.startswith("pay_"))
 async def cb_pay(call: CallbackQuery):
     parts = call.data.split("_")
-    kind  = parts[1]
     stars = int(parts[2])
-    if kind == "premium":
-        title       = "◈ VIP · 1 месяц"
-        description = "VIP-доступ к Quiet Mod на 30 дней"
-    else:
-        title       = f"◇ Вклад {stars}⭐"
-        description = f"Поддержка проекта Quiet Mod — {stars} звёзд"
+    title       = f"⟡ Вклад {stars}⭐"
+    description = f"Поддержка развития Quiet Mod — {stars} звёзд"
     await call.answer()
     await bot.send_invoice(
         chat_id=call.from_user.id,
         title=title,
         description=description,
-        payload=f"{kind}_{stars}",
+        payload=f"donate_{stars}",
         currency="XTR",
         prices=[LabeledPrice(label=title, amount=stars)],
     )
@@ -1722,42 +1700,18 @@ async def on_payment(msg: Message):
     stars   = msg.successful_payment.total_amount
     payload = msg.successful_payment.invoice_payload
     await db.save_payment(uid, stars, payload)
-    kind = payload.split("_")[0]
-    if kind == "premium":
-        user    = await db.get_user(uid)
-        current = user["premium_until"] if user and user.get("premium_until") else None
-        if current and date.fromisoformat(current) >= date.today():
-            new_date = date.fromisoformat(current) + timedelta(days=30)
-        else:
-            new_date = date.today() + timedelta(days=30)
-        await db.set_premium(uid, new_date)
-        text = (
-            f"◈ <b>VIP активирован!</b>\n{LINE}\n"
-            f"Действует до: <b>{new_date.strftime('%d.%m.%Y')}</b>\n"
-            "Архив расширен до 200 · Поиск включён."
-        )
-    else:
-        if stars >= DONOR_BADGE_MIN:
-            await db.set_donor_badge(uid)
-            bonus_date = date.today() + timedelta(days=30)
-            await db.set_premium(uid, bonus_date)
-            text = (
-                f"◇ <b>Спасибо за поддержку!</b>\n{LINE}\n"
-                f"Ты отправил <b>{stars}⭐</b>\n"
-                f"Метка в профиле: ◇\n"
-                f"VIP в подарок до: <b>{bonus_date.strftime('%d.%m.%Y')}</b>"
-            )
-        else:
-            text = (
-                f"◆ <b>Огромное спасибо!</b>\n{LINE}\n"
-                f"Ты поддержал проект на <b>{stars}⭐</b>\n"
-                "Эти средства идут на серверы и развитие."
-            )
+    text = (
+        f"⟡ <b>Спасибо за поддержку!</b>\n{LINE}\n\n"
+        f"Ты внёс вклад в развитие Quiet Mod — <b>{stars}⭐</b>\n\n"
+        "Эти средства пойдут на серверы, ИИ и новые возможности.\n\n"
+        "Бот остаётся бесплатным и безлимитным для всех — навсегда.\n"
+        "Именно такие люди, как ты, делают это возможным 👁️"
+    )
     await msg.answer(text, reply_markup=kb_back("menu"))
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"◈ <b>Оплата</b> · {payload}\n"
+            f"⟡ <b>Донат</b> · {payload}\n"
             f"◇ {msg.from_user.full_name} (ID: {uid})\n"
             f"⭐ {stars} звёзд",
         )
@@ -1875,7 +1829,7 @@ async def cb_adm_stats(call: CallbackQuery):
         f"{LINE}\n"
         f"◇ Пользователей:  <b>{users}</b>\n"
         f"◇ Записей в БД:   <b>{msgs}</b>\n"
-        f"⭐ Всего звёзд:    <b>{stars}</b>\n"
+        f"⟡ Собрано звёзд:  <b>{stars}</b>\n"
         f"✦ Предложений:    <b>{ideas}</b>"
     )
     await call.message.edit_text(
@@ -2008,7 +1962,6 @@ async def on_idea_input(msg: Message, state: FSMContext):
         msg.from_user.full_name or "",
         text.strip()
     )
-    is_prem = await db.is_premium(uid)
     await msg.answer(
         f"✦ <b>Спасибо за идею!</b>\n{LINE}\n\n"
         "Твоё предложение отправлено разработчику.\n"
@@ -2221,22 +2174,21 @@ DEVLOG = (
     "▣ <b>АРХИВ СООБЩЕНИЙ</b>\n\n"
     "◇ <b>Хранилище перехватов</b>\n"
     "   Все перехваченные сообщения хранятся в архиве.\n"
-    "   Базовый: 20 записей · VIP: 200 записей.\n\n"
-    "◐ <b>Поиск по архиву</b>  <i>(VIP)</i>\n"
+    "   Архив безлимитный — для всех.\n\n"
+    "◐ <b>Поиск по архиву</b>\n"
     "   Найди любое сообщение по тексту, имени\n"
     "   отправителя или юзернейму за секунды.\n\n"
     "◆ <b>Сохранить навсегда</b>\n"
     "   Одна кнопка под уведомлением — и сообщение\n"
     "   останется у тебя навсегда вне зависимости от архива.\n\n"
     f"{LINE}\n"
-    "◈ <b>VIP</b>  <code>50 звёзд / месяц</code>\n\n"
-    "   • Архив расширяется с 20 до <b>200</b> записей\n"
-    "   • Поиск по всему архиву\n"
-    "   • Метка ◈ в профиле\n\n"
-    "◇ <b>ВКЛАД</b>  <code>100+ звёзд</code>\n\n"
-    "   • Метка ◇ навсегда\n"
-    "   • +30 дней VIP в подарок\n"
-    "   • Поддержка независимого проекта\n\n"
+    "⟡ <b>ПОДДЕРЖКА ПРОЕКТА</b>\n\n"
+    "   Quiet Mod бесплатен и без лимитов — навсегда.\n"
+    "   Мы никого ни о чём не просим.\n\n"
+    "   Но если у тебя есть немного лишнего —\n"
+    "   вклад 15/30/50⭐ очень поможет: серверы,\n"
+    "   ИИ и новые возможности.\n\n"
+    "   В меню бота: <b>«⟡ Поддержать проект»</b>\n\n"
     f"{LINE}\n"
     "⚙ <b>КАК ПОДКЛЮЧИТЬ?</b>\n\n"
     "   Нужен <b>Telegram Business</b> (или просто добавить\n"

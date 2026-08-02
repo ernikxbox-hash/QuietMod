@@ -15,8 +15,6 @@ BOT_USERNAME = "Quiet_Mod_Bot"
 GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 GROQ_MODEL_TEXT = "llama-3.3-70b-versatile"
 BRAND_NAME = "Quiet Mod 👁️"
-PREMIUM_MONTHLY_STARS = 50
-DONOR_BADGE_MIN = 100
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",

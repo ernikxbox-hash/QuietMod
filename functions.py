@@ -31,11 +31,9 @@ from core import (
     BOT_TOKEN,
     BOT_USERNAME,
     BRAND_NAME,
-    DONOR_BADGE_MIN,
     GROQ_API_KEYS,
     GROQ_MODEL,
     GROQ_MODEL_TEXT,
-    PREMIUM_MONTHLY_STARS,
     S,
     bot,
     log,
@@ -300,22 +298,18 @@ def _price_estimate(username: str) -> Optional[str]:
         f"— 👁️ @{BOT_USERNAME}"
     )
 
-def premium_badge(is_prem: bool, donor: bool) -> str:
-    if donor:  return "◇"
-    if is_prem: return "◈"
-    return ""
 def fmt_sender(from_name: str, username: str) -> str:
     if username:
         return f"{from_name} ({username})"
     return from_name
-def home_text(is_prem: bool) -> str:
-    status = "VIP-статус" if is_prem else "Базовый доступ"
+def home_text() -> str:
     return (
         f"◆ <b>QUIET MOD</b> 👁️\n"
         f"<code>{LINE}</code>\n\n"
-        f"◇ Статус       <b>{status}</b>\n"
+        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
         f"◇ Перехват     <b>безлимит</b>\n"
-        f"◇ Архив        <b>{'200' if is_prem else '20'} записей</b>\n"
+        f"◇ Архив        <b>безлимит</b>\n"
+        f"◇ Поиск        <b>включён</b>\n"
         f"◇ ИИ           <b>без лимитов</b>\n"
         f"<code>{LINE}</code>"
     )
@@ -350,7 +344,7 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
     except Exception as e:
         log.error(f"send notify to owner={owner_id}: {e}")
         return None
-def kb_main(uid: int, is_prem: bool) -> InlineKeyboardMarkup:
+def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
         rows.append([InlineKeyboardButton(text="▲ Admin Suite", callback_data="adm")])
@@ -361,8 +355,7 @@ def kb_main(uid: int, is_prem: bool) -> InlineKeyboardMarkup:
     rows.append([
         InlineKeyboardButton(text="◈ Сохранённые ➩", callback_data="show_saved"),
     ])
-    if is_prem:
-        rows.append([InlineKeyboardButton(text="◐ Поиск по архиву", callback_data="search")])
+    rows.append([InlineKeyboardButton(text="◐ Поиск по архиву", callback_data="search")])
     rows.append([InlineKeyboardButton(text="◆ ИИ-консьерж — без лимитов", callback_data="ai_open")])
     rows.append([
         InlineKeyboardButton(text="⟡ Приглашения", callback_data="referrals"),
@@ -372,10 +365,7 @@ def kb_main(uid: int, is_prem: bool) -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="✦ Предложить",   callback_data="suggest_idea"),
         InlineKeyboardButton(text="⚙ Подключение",  callback_data="howto"),
     ])
-    if is_prem:
-        rows.append([InlineKeyboardButton(text="◈ VIP-статус активен — продлить", callback_data="premium_info")])
-    else:
-        rows.append([InlineKeyboardButton(text="◈ VIP · 50★/мес — расширить архив", callback_data="premium_info")])
+    rows.append([InlineKeyboardButton(text="⟡ Поддержать проект", callback_data="donate")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 def kb_back(target: str = "menu", label: str = "← В меню") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -395,14 +385,12 @@ def kb_ai() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="← Завершить",       callback_data="ai_exit"),
         ],
     ])
-def kb_premium() -> InlineKeyboardMarkup:
+def kb_donate() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◈ VIP · 50★ — 1 месяц",        callback_data="pay_premium_50")],
-        [InlineKeyboardButton(text="─────────────────",  callback_data="noop")],
-        [InlineKeyboardButton(text="◇ Вклад · 100★  (+30 дн. VIP)", callback_data="pay_donate_100")],
-        [InlineKeyboardButton(text="◇ Вклад · 200★  (+30 дн. VIP)", callback_data="pay_donate_200")],
-        [InlineKeyboardButton(text="◇ Вклад · 500★  (+30 дн. VIP)", callback_data="pay_donate_500")],
-        [InlineKeyboardButton(text="← В меню",                       callback_data="back_menu")],
+        [InlineKeyboardButton(text="⟡ 15 ⭐", callback_data="pay_donate_15")],
+        [InlineKeyboardButton(text="⟡ 30 ⭐", callback_data="pay_donate_30")],
+        [InlineKeyboardButton(text="⟡ 50 ⭐", callback_data="pay_donate_50")],
+        [InlineKeyboardButton(text="← В меню", callback_data="back_menu")],
     ])
 CMD_FEATURES: dict[str, dict] = {
     "ai": {

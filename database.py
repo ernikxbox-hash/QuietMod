@@ -244,15 +244,15 @@ async def get_all_users(limit: int = 50, offset: int = 0) -> list[dict]:
         (limit, offset)
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
-FREE_CACHE_LIMIT    = 20
-PREMIUM_CACHE_LIMIT = 200
+FREE_CACHE_LIMIT    = 100_000  # лимиты архива убраны — практически безлимит для всех
+PREMIUM_CACHE_LIMIT = 100_000  # (премиум-подписки больше нет)
 
 async def _get_owner_limit(owner_id: int) -> int:
     now = asyncio.get_running_loop().time()
     cached = _owner_limit_cache.get(owner_id)
     if cached and cached[1] > now:
         return cached[0]
-    limit = PREMIUM_CACHE_LIMIT if await is_premium(owner_id) else FREE_CACHE_LIMIT
+    limit = FREE_CACHE_LIMIT  # архив безлимитен для всех
     _owner_limit_cache[owner_id] = (limit, now + _OWNER_LIMIT_TTL_SECONDS)
     return limit
 
