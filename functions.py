@@ -47,7 +47,7 @@ business_muted_chats: set[tuple[str, int]] = set()
 business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
 user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner_id, started_at, note}
-knb_games: dict[tuple[str, int], dict] = {}  # (conn_id, chat_id) -> состояние игры .knb
+knb_games: dict[tuple, dict] = {}  # ("dm"|"bg", conn_id, chat_id) или ("group", chat_id) -> состояние игры .knb
 business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
@@ -452,10 +452,10 @@ CMD_FEATURES: dict[str, dict] = {
     },
     "knb": {
         "title": "⚔️ .knb",
-        "desc": "Камень-ножницы-бумага с собеседником.",
-        "usage": ".knb",
-        "example": ".knb — в ЛС (Business)",
-        "note": "Секретные ходы · случайный первый ход"
+        "desc": "Камень-ножницы-бумага: 1×1 в ЛС и в группах по вызову.",
+        "usage": ".knb — ЛС · .knb @user — группа",
+        "example": ".knb @friend",
+        "note": "Секретные ходы · случайный первый ход · счёт на реваншах"
     },
     "bold": {
         "title": "◆ .bold",
