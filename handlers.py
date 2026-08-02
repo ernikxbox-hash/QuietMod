@@ -50,22 +50,17 @@ from functions import (
     _get_weather,
     _groq_request,
     _is_weather_query,
-    _load_cpt_emoji,
     _normalize_code_blocks,
     _price_estimate,
     _reply_ai_html,
     _send_notify,
     _show_home,
-    pe,
 )
 from business_api import (
-    _business_copy_message,
-    _business_delete_retry,
+    _business_delete_message_ex,
     _business_edit_message,
     _business_edit_message_ex,
-    _business_send_chat_action,
     _business_send_message_ex,
-    _business_send_photo_ex,
 )
 _BC_OWNER_CACHE: dict[str, tuple[int, float]] = {}
 _BC_OWNER_TTL_SECONDS = 10 * 60
@@ -82,144 +77,6 @@ async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
         return None
     _BC_OWNER_CACHE[conn_id] = (owner_id, now + _BC_OWNER_TTL_SECONDS)
     return owner_id
-_ANTI_MUTE_RE = re.compile(r"(?i)^\s*\.(nomute|anti-?mute|anti[ _]?mute|nomuteon|muteoff|unmute[_ ]?bot|deletemute|nodel)\b")
-_ANTI_MUTE_NOTIFY: dict[int, float] = {}  # owner_id -> время последнего уведомления
-
-async def _muted_chat_filter(msg: Message) -> bool:
-    """True, если сообщение в замученном приватном чате нужно удалить.
-
-    Удаляем ВСЁ, что пришло не от владельца чата: обычные сообщения
-    собеседника, сообщения от чужих бизнес-ботов (анти-мут), анонимные
-    инжекты. Сообщения самого владельца не трогаем.
-    """
-    if not msg.business_connection_id:
-        return False
-    if getattr(msg.chat, "type", None) != "private":
-        return False
-    owner = business_muted_chats.get((msg.business_connection_id, msg.chat.id))
-    if owner is None:
-        return False
-    if msg.from_user and msg.from_user.id == owner:
-        return False
-    return True
-
-async def _wbl_chat_filter(msg: Message) -> bool:
-    """True, если сообщение от собеседника в WBL-чате и его нужно удалить (мат/флуд)."""
-    if not msg.business_connection_id or not msg.from_user:
-        return False
-    if getattr(msg.chat, "type", None) != "private":
-        return False
-    owner = business_wbl_chats.get((msg.business_connection_id, msg.chat.id))
-    if owner is None or msg.from_user.id == owner:
-        return False
-    return _wbl_should_delete((msg.text or msg.caption or ""))
-
-@dp.business_message(_muted_chat_filter)
-async def on_muted_msg(msg: Message):
-    """Первый бизнес-обработчик: мгновенно удаляем ВСЁ не-владельцево в замученном чате.
-
-    Зарегистрирован раньше всех командных хендлеров, поэтому никакие
-    `.mute` / `.ai x` / `.spam x` / `.nomute` от собеседника не смогут
-    обойти мут — удаление происходит до того, как их перехватит команда.
-    """
-    conn_id = msg.business_connection_id
-    await _business_delete_retry(conn_id, msg.message_id)
-    text = (msg.text or msg.caption or "").strip()
-    is_bot_sender = bool(msg.from_user and msg.from_user.is_bot)
-    if msg.from_user and (is_bot_sender or _ANTI_MUTE_RE.match(text)):
-        owner_id = business_muted_chats.get((conn_id, msg.chat.id))
-        now_mono = asyncio.get_running_loop().time()
-        if owner_id and now_mono - _ANTI_MUTE_NOTIFY.get(owner_id, 0.0) > 600:
-            _ANTI_MUTE_NOTIFY[owner_id] = now_mono
-            if is_bot_sender:
-                detail = "сообщение отправлено через стороннего бота (анти-мут)"
-            else:
-                detail = f"отправлена команда обхода мута: <code>{html_escape(text[:60])}</code>"
-            await _send_notify(
-                owner_id,
-                "⚠️ <b>Обнаружена попытка обойти мут</b>\n"
-                f"{LINE}\n\n"
-                f"◇ {detail}\n"
-                "◇ Собеседник дублирует свои сообщения\n"
-                "   через своего бизнес-бота.\n\n"
-                "◆ Telegram скрывает такие сообщения от нас —\n"
-                "   удалить их бот не может.\n\n"
-                "◆ <b>Решение:</b> заблокируй собеседника —\n"
-                "   тогда и его бот перестанет писать."
-            )
-    log.debug(f"🔇 mute deleted msg={msg.message_id}")
-
-@dp.business_message(_wbl_chat_filter)
-async def on_wbl_msg(msg: Message):
-    """Первый бизнес-обработчик: мгновенно удаляем мат/флуд от собеседника в WBL-чате."""
-    await _business_delete_retry(msg.business_connection_id, msg.message_id)
-    log.debug(f"🧹 wbl deleted msg={msg.message_id}")
-
-async def _nomute_chat_filter(msg: Message) -> bool:
-    """True, если сообщение ВЛАДЕЛЬЦА в анти-мут чате нужно переслать через бота.
-
-    Копия, отправленная через бизнес-подключение, невидима чужим ботам —
-    их мут её не видит и не удаляет. Команды не трогаем.
-    """
-    if not msg.business_connection_id:
-        return False
-    if getattr(msg.chat, "type", None) != "private":
-        return False
-    owner = business_nomute_chats.get((msg.business_connection_id, msg.chat.id))
-    if owner is None:
-        return False
-    if not msg.from_user or msg.from_user.id != owner:
-        return False
-    if msg.business_connection_id in business_code_mode:
-        return False
-    text = (msg.text or msg.caption or "").strip()
-    if text.startswith("."):
-        return False
-    return True
-
-async def _nomute_fallback_send(msg: Message) -> bool:
-    """Если copyMessage не удался (оригинал уже мог удалить чужой мут) —
-    дублируем контент заново: текст через sendMessage, фото через sendPhoto.
-    Новое сообщение не зависит от существования оригинала."""
-    conn_id = msg.business_connection_id
-    chat_id = msg.chat.id
-    caption = (msg.caption or "").strip()
-    if msg.photo:
-        ok, _, _ = await _business_send_photo_ex(conn_id, chat_id, msg.photo[-1].file_id, caption)
-        return ok
-    text = (msg.text or "").strip()
-    if text:
-        ok, retry_after, _ = await _business_send_message_ex(conn_id, chat_id, text)
-        if not ok and retry_after:
-            await asyncio.sleep(min(int(retry_after), 5))
-            ok, _, _ = await _business_send_message_ex(conn_id, chat_id, text)
-        return ok
-    return False
-
-@dp.business_message(_nomute_chat_filter)
-async def on_nomute_forward(msg: Message):
-    """Анти-анти-мут: копируем сообщение владельца через бизнес-подключение
-    (копия невидима чужим ботам) и удаляем оригинал, чтобы не было дублей."""
-    conn_id = msg.business_connection_id
-    chat_id = msg.chat.id
-    ok = False
-    new_id = None
-    err = None
-    for attempt in range(2):
-        ok, new_id, err = await _business_copy_message(conn_id, chat_id, chat_id, msg.message_id)
-        if ok:
-            break
-        if attempt == 0:
-            await asyncio.sleep(0.15)
-    if not ok:
-        ok = await _nomute_fallback_send(msg)
-        new_id = None
-    if ok:
-        await _business_delete_retry(conn_id, msg.message_id)
-        log.debug(f"🛡️ nomute forwarded {msg.message_id} -> {new_id} chat={chat_id}")
-    else:
-        log.warning(f"🛡️ nomute forward failed chat={chat_id}: {err}")
-
 @dp.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
@@ -246,23 +103,21 @@ async def cmd_start(msg: Message, state: FSMContext):
             )
         except Exception:
             pass
-    await _load_cpt_emoji()
     home_text_full = (
-        f"{pe('👁️')} <b>QUIET MOD</b>\n"
+        f"◆ <b>QUIET MOD</b> 👁️\n"
         f"<code>{LINE}</code>\n\n"
-        f"<b>{html_escape(name)}</b>, добро пожаловать в тишину.\n"
+        f"<b>{html_escape(name)}</b>, добро пожаловать в тишину.\n\n"
         "Я слежу за тем, что исчезает —\n"
         "<b>удалённые и изменённые</b> сообщения\n"
         "появятся здесь раньше, чем их забудут.\n\n"
         f"<code>{LINE}</code>\n"
-        f"{pe('🖼️')} Архив        <b>безлимит</b>\n"
-        f"{pe('🔍')} Поиск        <b>включён</b>\n"
-        f"{pe('🔗')} ИИ           <b>без лимитов</b>\n"
-        f"{pe('👁️‍🗨️')} Mute · WBL   <b>в бизнес-чатах</b>\n"
-        f"{pe('👁')} Перехват     <b>безлимит</b>\n"
-        f"{pe('🔔')} Уведомления  <b>об удалённых и изменённых</b>\n"
+        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
+        f"◇ Перехват     <b>безлимит</b>\n"
+        f"◇ Архив        <b>безлимит</b>\n"
+        f"◇ Поиск        <b>включён</b>\n"
+        f"◇ ИИ           <b>без лимитов</b>\n"
         f"<code>{LINE}</code>\n\n"
-        f"🔗 Пригласить:\n"
+        f"◇ Пригласить:\n"
         f"<code>{ref_link(uid)}</code>"
     )
     await _show_home(uid, home_text_full, kb_main(uid), msg)
@@ -402,7 +257,7 @@ async def on_mute_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_muted_chats[(msg.business_connection_id, msg.chat.id)] = owner_id
+    business_muted_chats.add((msg.business_connection_id, msg.chat.id))
     mute_kb = {"inline_keyboard": [[{"text": "🔴 Размутить", "callback_data": "unmute_btn"}]]}
     await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
@@ -429,7 +284,7 @@ async def on_unmute_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_muted_chats.pop((msg.business_connection_id, msg.chat.id), None)
+    business_muted_chats.discard((msg.business_connection_id, msg.chat.id))
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Mute выключен")
 @dp.callback_query(F.data == "unmute_btn")
 async def cb_unmute_btn(call: CallbackQuery):
@@ -448,7 +303,7 @@ async def cb_unmute_btn(call: CallbackQuery):
     if key not in business_muted_chats:
         await call.answer("◇ Уже размучен", show_alert=False)
     else:
-        business_muted_chats.pop(key, None)
+        business_muted_chats.discard(key)
         await call.answer("✅ Пользователь размучен", show_alert=False)
     await _business_edit_message(
         conn_id, chat_id, call.message.message_id,
@@ -461,225 +316,6 @@ async def cb_unmute_btn(call: CallbackQuery):
         ),
         reply_markup={"inline_keyboard": []},
     )
-@dp.business_message(F.text.regexp(r"(?i)^\.nomute(\s+off)?$"))
-async def on_nomute_inline(msg: Message):
-    if not msg.business_connection_id:
-        return
-    if getattr(msg.chat, "type", None) != "private":
-        return
-    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".nomute")
-    if owner_id is None:
-        return
-    if not msg.from_user or msg.from_user.id != owner_id:
-        return
-    business_nomute_chats[(msg.business_connection_id, msg.chat.id)] = owner_id
-    nomute_kb = {"inline_keyboard": [[{"text": "🔴 Выключить анти-мут", "callback_data": "nomute_off_btn"}]]}
-    await _business_edit_message(
-        msg.business_connection_id, msg.chat.id, msg.message_id,
-        (
-            "🛡️ <b>АНТИ-МУТ ВКЛЮЧЁН</b>\n"
-            f"<code>{LINE}</code>\n\n"
-            "◇ Твои сообщения идут через бота\n"
-            "◇ Чужие муты их не видят и не удаляют\n"
-            "◇ Оригинал удаляется — дублей не будет\n\n"
-            f"<code>{LINE}</code>\n"
-            "◇ Выключить: кнопка ниже 👇\n"
-            "   или команда <code>.unomute</code>\n\n"
-            f"— 👁️ @{BOT_USERNAME}"
-        ),
-        reply_markup=nomute_kb,
-    )
-@dp.business_message(F.text.regexp(r"(?i)^\.(unomute|nomuteoff)$"))
-async def on_unomute_inline(msg: Message):
-    if not msg.business_connection_id:
-        return
-    if getattr(msg.chat, "type", None) != "private":
-        return
-    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".unomute")
-    if owner_id is None:
-        return
-    if not msg.from_user or msg.from_user.id != owner_id:
-        return
-    business_nomute_chats.pop((msg.business_connection_id, msg.chat.id), None)
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Анти-мут выключен")
-@dp.callback_query(F.data == "nomute_off_btn")
-async def cb_nomute_off_btn(call: CallbackQuery):
-    conn_id = getattr(call, "business_connection_id", None)
-    if not conn_id and call.message:
-        conn_id = getattr(call.message, "business_connection_id", None)
-    if not conn_id or not call.message or not call.message.chat:
-        await call.answer("⛔ Не удалось выключить анти-мут", show_alert=True)
-        return
-    owner_id = await _get_owner_id_cached(conn_id, "nomute_off_btn")
-    if owner_id is None or call.from_user.id != owner_id:
-        await call.answer("⛔ Только владелец может выключить анти-мут", show_alert=True)
-        return
-    chat_id = call.message.chat.id
-    key = (conn_id, chat_id)
-    if key not in business_nomute_chats:
-        await call.answer("◇ Анти-мут уже выключен", show_alert=False)
-    else:
-        business_nomute_chats.pop(key, None)
-        await call.answer("✅ Анти-мут выключен", show_alert=False)
-    await _business_edit_message(
-        conn_id, chat_id, call.message.message_id,
-        (
-            "🛡️ <b>АНТИ-МУТ ВЫКЛЮЧЕН</b>\n"
-            f"<code>{LINE}</code>\n\n"
-            "◇ Сообщения снова идут напрямую\n"
-            "◇ Чужие муты снова могут их видеть\n\n"
-            f"— 👁️ @{BOT_USERNAME}"
-        ),
-        reply_markup={"inline_keyboard": []},
-    )
-async def _peek_worker(conn_id: str, chat_id: int, seconds: int):
-    """Держим индикатор «печатает...» от имени бизнес-аккаунта указанное время.
-
-    Индикатор живёт ~5 секунд, поэтому переотправляем action каждые 4 секунды.
-    Останавливается сам по истечении времени, по новой команде или когда
-    владелец реально отправляет сообщение."""
-    key = (conn_id, chat_id)
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + seconds
-    try:
-        while loop.time() < deadline:
-            await _business_send_chat_action(conn_id, chat_id, "typing")
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                break
-            await asyncio.sleep(min(4.0, remaining))
-    except asyncio.CancelledError:
-        pass
-    except Exception as e:
-        log.error(f"👀 peek worker: {e}")
-    finally:
-        business_peek_tasks.pop(key, None)
-_peek_chooser: dict[int, dict] = {}  # owner_id -> {"seconds": int, "chats": {idx: (conn_id, chat_id, name)}}
-
-async def _start_peek(conn_id: str, chat_id: int, seconds: int) -> None:
-    """Запустить «печатает...» в бизнес-чате (новая команда гасит предыдущую)."""
-    key = (conn_id, chat_id)
-    existing = business_peek_tasks.get(key)
-    if existing and not existing.done():
-        existing.cancel()
-    business_peek_tasks[key] = asyncio.create_task(_peek_worker(conn_id, chat_id, seconds))
-
-@dp.business_message(F.text.regexp(r"(?i)^\.peek(\s+\d+)?\s*$"))
-async def on_peek_inline(msg: Message):
-    if not msg.business_connection_id:
-        return
-    if getattr(msg.chat, "type", None) != "private":
-        return
-    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".peek")
-    if owner_id is None:
-        return
-    if not msg.from_user or msg.from_user.id != owner_id:
-        return
-    m = re.match(r"(?i)^\.peek\s+(\d+)\s*$", msg.text or "")
-    if not m:
-        # Голый .peek — молча убираем команду, чтобы не светить её в чате
-        await _business_delete_retry(msg.business_connection_id, msg.message_id)
-        return
-    seconds = max(1, min(int(m.group(1)), 120))
-    await _start_peek(msg.business_connection_id, msg.chat.id, seconds)
-    # Стелс: саму команду удаляем, чтобы собеседник её не увидел
-    await _business_delete_retry(msg.business_connection_id, msg.message_id)
-    log.info(f"👀 .peek {seconds}s chat={msg.chat.id}")
-
-@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.peek(\s+(stop|\d+))?\s*$"), F.chat.type == "private")
-async def on_peek_dm(msg: Message):
-    """`.peek` из ЛС с ботом: показать «печатает...» в выбранном бизнес-чате.
-    `.peek` / `.peek N` — выбор чата кнопками, `.peek stop` — остановить всё."""
-    if not msg.from_user:
-        return
-    uid = msg.from_user.id
-    raw = (msg.text or "").strip().lower()
-    if "stop" in raw:
-        _peek_chooser.pop(uid, None)  # гасим и незакрытые окна выбора чата
-        conns = {c for (c, _) in business_chats_by_owner.get(uid, {})}
-        stopped = 0
-        for (conn_id, _), task in list(business_peek_tasks.items()):
-            if conn_id in conns and not task.done():
-                task.cancel()
-                stopped += 1
-        await msg.answer("◇ «Печатает...» остановлено" if stopped else "◇ Активных «печатает...» нет")
-        return
-    m = re.match(r"(?i)^\.peek\s*(\d+)?\s*$", raw)
-    seconds = 10 if not m or not m.group(1) else max(1, min(int(m.group(1)), 120))
-    chats = business_chats_by_owner.get(uid)
-    if not chats:
-        await msg.answer(
-            "👀 <b>.peek из ЛС</b>\n"
-            f"<code>{LINE}</code>\n\n"
-            "◇ У меня нет твоих бизнес-чатов.\n"
-            "◇ Напиши кому-нибудь через бизнес-подключение\n"
-            "   хотя бы раз — бот запомнит чат,\n"
-            "   и `.peek` заработает."
-        )
-        return
-    if len(chats) == 1:
-        (conn_id, chat_id), name = next(iter(chats.items()))
-        await _start_peek(conn_id, chat_id, seconds)
-        await msg.answer(
-            f"👀 <b>Печатает в «{html_escape(name)}»</b>\n"
-            f"<code>{LINE}</code>\n\n"
-            f"◇ Держу «печатает...» <b>{seconds} сек</b>\n"
-            f"— 👁️ @{BOT_USERNAME}"
-        )
-        return
-    _peek_chooser[uid] = {
-        "seconds": seconds,
-        "chats": {i: (conn_id, chat_id, name) for i, ((conn_id, chat_id), name) in enumerate(chats.items())},
-    }
-    rows = [
-        [InlineKeyboardButton(text=f"👀 {html_escape(name)}", callback_data=f"peek_pick_{i}")]
-        for i, (_, name) in enumerate(chats.items())
-    ]
-    rows.append([InlineKeyboardButton(text="✕ Отмена", callback_data="peek_pick_cancel")])
-    await msg.answer(
-        f"👀 <b>В каком чате печатать?</b>\n"
-        f"<code>{LINE}</code>\n\n"
-        f"◇ <b>{seconds} сек</b> · выбери чат 👇\n"
-        f"— 👁️ @{BOT_USERNAME}",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
-    )
-
-@dp.callback_query(F.data.startswith("peek_pick_"))
-async def cb_peek_pick(call: CallbackQuery):
-    uid = call.from_user.id
-    if call.data == "peek_pick_cancel":
-        _peek_chooser.pop(uid, None)
-        await call.answer("Отменено", show_alert=False)
-        try:
-            await call.message.edit_text("◇ Отменено", reply_markup=InlineKeyboardMarkup(inline_keyboard=[]))
-        except Exception:
-            pass
-        return
-    try:
-        idx = int(call.data[len("peek_pick_"):])
-    except ValueError:
-        await call.answer("⛔ Ошибка выбора", show_alert=True)
-        return
-    state = _peek_chooser.get(uid)
-    if not state or idx not in state.get("chats", {}):
-        await call.answer("⛔ Выбор устарел — попробуй ещё раз: .peek", show_alert=True)
-        return
-    conn_id, chat_id, name = state["chats"][idx]
-    seconds = state.get("seconds", 10)
-    _peek_chooser.pop(uid, None)
-    await _start_peek(conn_id, chat_id, seconds)
-    try:
-        await call.message.edit_text(
-            f"👀 <b>Печатает в «{html_escape(name)}»</b>\n"
-            f"<code>{LINE}</code>\n\n"
-            f"◇ Держу «печатает...» <b>{seconds} сек</b>\n"
-            f"— 👁️ @{BOT_USERNAME}",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
-        )
-    except Exception:
-        pass
-    await call.answer("✅ Печатает", show_alert=False)
-    log.info(f"👀 .peek dm {seconds}s chat={chat_id}")
 @dp.business_message(F.text.regexp(r"(?i)^\.afk(\s+.*)?$"))
 async def on_afk_inline(msg: Message):
     if not msg.business_connection_id:
@@ -891,7 +527,7 @@ async def on_wbl_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_wbl_chats[(msg.business_connection_id, msg.chat.id)] = owner_id
+    business_wbl_chats.add((msg.business_connection_id, msg.chat.id))
     wbl_kb = {"inline_keyboard": [[{"text": "🔴 Выключить фильтр", "callback_data": "unwbl_btn"}]]}
     await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
@@ -918,7 +554,7 @@ async def on_unwbl_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_wbl_chats.pop((msg.business_connection_id, msg.chat.id), None)
+    business_wbl_chats.discard((msg.business_connection_id, msg.chat.id))
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Фильтр мата выключен")
 @dp.callback_query(F.data == "unwbl_btn")
 async def cb_unwbl_btn(call: CallbackQuery):
@@ -937,7 +573,7 @@ async def cb_unwbl_btn(call: CallbackQuery):
     if key not in business_wbl_chats:
         await call.answer("◇ Фильтр уже выключен", show_alert=False)
     else:
-        business_wbl_chats.pop(key, None)
+        business_wbl_chats.discard(key)
         await call.answer("✅ Фильтр выключен", show_alert=False)
     await _business_edit_message(
         conn_id, chat_id, call.message.message_id,
@@ -1713,26 +1349,11 @@ async def cb_knb_cancel(call: CallbackQuery):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+        return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
         return
-    # Трекинг бизнес-чатов владельца — нужно для .peek из ЛС с ботом
-    chat_name = (
-        msg.chat.title
-        or getattr(msg.chat, "full_name", None)
-        or (msg.chat.username or "")
-        or "Чат"
-    )
-    business_chats_by_owner.setdefault(owner_id, {})[
-        (msg.business_connection_id, msg.chat.id)
-    ] = chat_name
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".nomute", ".unomute", ".peek", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
-        return
-    # Владелец реально что-то отправил — фейковая «печатает...» останавливается
-    if msg.from_user and msg.from_user.id == owner_id:
-        peek_task = business_peek_tasks.get((msg.business_connection_id, msg.chat.id))
-        if peek_task and not peek_task.done():
-            peek_task.cancel()
     if msg.from_user and getattr(msg.chat, "type", None) in ("group", "supergroup"):
         _knb_cache_member(msg.chat.id, msg.from_user)
     if (
@@ -1744,6 +1365,30 @@ async def on_business_msg(msg: Message):
     ):
         code_text = f"<pre><code>{html_escape(msg.text)}</code></pre>"
         await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, code_text)
+        return
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
+        and (msg.business_connection_id, msg.chat.id) in business_wbl_chats
+        and _wbl_should_delete((msg.text or msg.caption or ""))
+    ):
+        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        log.debug(f"🧹 wbl deleted msg={msg.message_id} owner={owner_id}")
+        return
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
+        and (msg.business_connection_id, msg.chat.id) in business_muted_chats
+    ):
+        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         return
     afk = business_afk.get(msg.business_connection_id) or user_afk.get(owner_id)
     if (
@@ -1800,14 +1445,6 @@ async def on_edited_business_msg(msg: Message):
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "edit")
     if owner_id is None:
         return
-    if (
-        getattr(msg.chat, "type", None) == "private"
-        and msg.from_user
-        and msg.from_user.id != owner_id
-        and (msg.business_connection_id, msg.chat.id) in business_muted_chats
-    ):
-        await _business_delete_retry(msg.business_connection_id, msg.message_id)
-        return
     new_text = msg.text or msg.caption or ""
     is_bot_edit = (
         f"— 👁️ @{BOT_USERNAME}" in new_text
@@ -1815,17 +1452,6 @@ async def on_edited_business_msg(msg: Message):
     )
     sender_id = msg.from_user.id if msg.from_user else None
     is_owner_edit = (sender_id == owner_id)
-    if (
-        sender_id == owner_id
-        and (msg.business_connection_id, msg.chat.id) in business_nomute_chats
-    ):
-        # В анти-мут чате пере-копируем отредактированное сообщение владельца
-        ok, _, _ = await _business_copy_message(
-            msg.business_connection_id, msg.chat.id, msg.chat.id, msg.message_id
-        )
-        if ok:
-            await _business_delete_retry(msg.business_connection_id, msg.message_id)
-        return
     if not is_bot_edit and not is_owner_edit:
         cached = await db.get_message(owner_id, msg.message_id)
         old_text = cached["text"] if cached else None

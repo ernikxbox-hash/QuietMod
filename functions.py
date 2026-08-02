@@ -43,16 +43,13 @@ from business_api import _business_edit_message_ex
 ai_history: dict[int, list] = {}
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
-business_muted_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id — для мгновенного удаления без лишних запросов
+business_muted_chats: set[tuple[str, int]] = set()
 business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
 user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner_id, started_at, note}
 knb_games: dict[tuple, dict] = {}  # ("dm"|"bg", conn_id, chat_id) или ("group", chat_id) -> состояние игры .knb
 business_code_mode: set[str] = set()
-business_wbl_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id
-business_nomute_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id — анти-мут: сообщения владельца идут через бота (невидимы чужим ботам)
-business_peek_tasks: dict[tuple[str, int], asyncio.Task] = {}  # (conn_id, chat_id) -> задача «печатает...» (.peek)
-business_chats_by_owner: dict[int, dict[tuple[str, int], str]] = {}  # owner_id -> {(conn_id, chat_id): имя чата} — для .peek из ЛС
+business_wbl_chats: set[tuple[str, int]] = set()
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
 MAX_MSG_CACHE = 200
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
@@ -348,72 +345,28 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
     except Exception as e:
         log.error(f"send notify to owner={owner_id}: {e}")
         return None
-_CPT_EMOJI: dict[str, str] = {}  # нормализованный эмодзи (placeholder) -> custom_emoji_id из пака CPT_Emoji
-_CPT_EMOJI_LOADED = False
-
-
-def _norm_emoji(char: str) -> str:
-    """Нормализация эмодзи для матчинга с паком: убираем VS16 (U+FE0F) и пробелы.
-
-    В паке placeholder может быть записан без вариационного селектора
-    (например «👁» вместо «👁️») — так матч не ломается."""
-    return char.replace("\ufe0f", "").strip()
-
-
-async def _load_cpt_emoji() -> None:
-    """Тянем пак кастомных эмодзи CPT_Emoji и запоминаем emoji_id.
-
-    В тексте меню они рендерятся через <tg-emoji> у всех пользователей,
-    а у подписчиков Premium — анимированные. Флаг ставится только при
-    успехе — при ошибке загрузка повторится при следующем вызове."""
-    global _CPT_EMOJI_LOADED
-    if _CPT_EMOJI_LOADED:
-        return
-    try:
-        sset = await bot.get_sticker_set("CPT_Emoji")
-        for st in sset.stickers:
-            if getattr(st, "type", None) == "custom_emoji" and st.emoji and st.custom_emoji_id:
-                _CPT_EMOJI.setdefault(_norm_emoji(st.emoji), st.custom_emoji_id)
-        _CPT_EMOJI_LOADED = True
-        if _CPT_EMOJI:
-            log.info(f"✨ Пак CPT_Emoji загружен: {len(_CPT_EMOJI)} эмодзи")
-            log.info(f"✨ В паке есть: {sorted(_CPT_EMOJI)}")
-        else:
-            log.warning("✨ Пак CPT_Emoji пуст или не содержит custom_emoji")
-    except Exception as e:
-        log.warning(f"✨ Пак CPT_Emoji не загружен (повтор при следующем вызове): {e}")
-
-
-def pe(char: str, fallback: str | None = None) -> str:
-    """HTML-тег кастомного эмодзи из пака CPT_Emoji; если в паке такого нет — обычный символ."""
-    cid = _CPT_EMOJI.get(_norm_emoji(char))
-    if cid:
-        return f'<tg-emoji emoji-id="{cid}">{char}</tg-emoji>'
-    return fallback or char
-
-
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
-        rows.append([InlineKeyboardButton(text="🛠️ Admin Suite", callback_data="adm")])
+        rows.append([InlineKeyboardButton(text="▲ Admin Suite", callback_data="adm")])
     rows.append([
-        InlineKeyboardButton(text="🖼️ Архив",        callback_data="show_all"),
-        InlineKeyboardButton(text="👤 Профиль",      callback_data="stats"),
+        InlineKeyboardButton(text="▣ Архив",        callback_data="show_all"),
+        InlineKeyboardButton(text="◆ Профиль",      callback_data="stats"),
     ])
     rows.append([
-        InlineKeyboardButton(text="🔖 Сохранённые",  callback_data="show_saved"),
+        InlineKeyboardButton(text="◈ Сохранённые ➩", callback_data="show_saved"),
     ])
-    rows.append([InlineKeyboardButton(text="🔍 Поиск по архиву", callback_data="search")])
-    rows.append([InlineKeyboardButton(text="🔗 ИИ-консьерж — без лимитов", callback_data="ai_open")])
+    rows.append([InlineKeyboardButton(text="◐ Поиск по архиву", callback_data="search")])
+    rows.append([InlineKeyboardButton(text="◆ ИИ-консьерж — без лимитов", callback_data="ai_open")])
     rows.append([
-        InlineKeyboardButton(text="👥 Приглашения",  callback_data="referrals"),
-        InlineKeyboardButton(text="🧹 Очистить",     callback_data="clear_cache"),
+        InlineKeyboardButton(text="⟡ Приглашения", callback_data="referrals"),
+        InlineKeyboardButton(text="✕ Очистить",    callback_data="clear_cache"),
     ])
     rows.append([
-        InlineKeyboardButton(text="💡 Предложить",   callback_data="suggest_idea"),
-        InlineKeyboardButton(text="⚙️ Подключение",  callback_data="howto"),
+        InlineKeyboardButton(text="✦ Предложить",   callback_data="suggest_idea"),
+        InlineKeyboardButton(text="⚙ Подключение",  callback_data="howto"),
     ])
-    rows.append([InlineKeyboardButton(text="💎 Поддержать проект", callback_data="donate")])
+    rows.append([InlineKeyboardButton(text="⟡ Поддержать проект", callback_data="donate")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 def kb_back(target: str = "menu", label: str = "← В меню") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -504,20 +457,6 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".knb @friend",
         "note": "Секретные ходы · случайный первый ход · счёт на реваншах"
     },
-    "nomute": {
-        "title": "🛡️ .nomute",
-        "desc": "Анти-анти-мут: твои сообщения пересылаются через бота — чужие муты их не видят.",
-        "usage": ".nomute — включить · .unomute — выключить",
-        "example": ".nomute",
-        "note": "Работает в приватных бизнес-чатах"
-    },
-    "peek": {
-        "title": "👀 .peek",
-        "desc": "Фейковая «печатает...» в бизнес-чате на N секунд — невидимо для собеседника.",
-        "usage": ".peek N — N секунд",
-        "example": ".peek 15",
-        "note": "Индикатор от твоего имени · стелс (команда удаляется)"
-    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -570,7 +509,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "nomute", "peek", "price", "knb",
+    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "price", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
