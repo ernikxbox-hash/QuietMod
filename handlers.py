@@ -47,7 +47,6 @@ from functions import (
     _ddg_search,
     _edit_ai_html,
     _extract_city,
-    _fmt_duration_ru,
     _get_image_base64,
     _get_weather,
     _groq_request,
@@ -910,12 +909,7 @@ async def on_business_msg(msg: Message):
         now_mono = asyncio.get_running_loop().time()
         last = business_afk_last_reply.get((msg.business_connection_id, msg.chat.id), 0.0)
         if now_mono - last >= 45:
-            started_at = afk.get("started_at")
-            elapsed = int((datetime.now(timezone.utc) - started_at).total_seconds()) if started_at else 0
-            parts = [
-                "Я сейчас не в сети.",
-                f"Прошло: {_fmt_duration_ru(max(0, elapsed))}",
-            ]
+            parts = ["Я сейчас не в сети."]
             note = (afk.get("note") or "").strip()
             if note:
                 parts.append(note)
