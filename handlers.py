@@ -1455,6 +1455,7 @@ async def cb_howto_group(call: CallbackQuery):
         "писать <code>.ai вопрос</code> — бот ответит прямо там.\n\n"
         "◇ <i>Пример: </i><code>.ai объясни квантовую физику</code>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить бота в группу", url=f"https://t.me/{BOT_USERNAME}?startgroup=")],
             [InlineKeyboardButton(text="← Назад", callback_data="howto")],
         ]),
     )
