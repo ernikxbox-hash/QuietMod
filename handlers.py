@@ -77,14 +77,26 @@ async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
         return None
     _BC_OWNER_CACHE[conn_id] = (owner_id, now + _BC_OWNER_TTL_SECONDS)
     return owner_id
+_ANTI_MUTE_RE = re.compile(r"(?i)^\s*\.(nomute|anti-?mute|anti[ _]?mute|nomuteon|muteoff|unmute[_ ]?bot|deletemute|nodel)\b")
+_ANTI_MUTE_NOTIFY: dict[int, float] = {}  # owner_id -> время последнего уведомления
+
 async def _muted_chat_filter(msg: Message) -> bool:
-    """True, если сообщение пришло в замученный приватный чат от собеседника."""
-    if not msg.business_connection_id or not msg.from_user:
+    """True, если сообщение в замученном приватном чате нужно удалить.
+
+    Удаляем ВСЁ, что пришло не от владельца чата: обычные сообщения
+    собеседника, сообщения от чужих бизнес-ботов (анти-мут), анонимные
+    инжекты. Сообщения самого владельца не трогаем.
+    """
+    if not msg.business_connection_id:
         return False
     if getattr(msg.chat, "type", None) != "private":
         return False
     owner = business_muted_chats.get((msg.business_connection_id, msg.chat.id))
-    return owner is not None and msg.from_user.id != owner
+    if owner is None:
+        return False
+    if msg.from_user and msg.from_user.id == owner:
+        return False
+    return True
 
 async def _wbl_chat_filter(msg: Message) -> bool:
     """True, если сообщение от собеседника в WBL-чате и его нужно удалить (мат/флуд)."""
@@ -99,13 +111,37 @@ async def _wbl_chat_filter(msg: Message) -> bool:
 
 @dp.business_message(_muted_chat_filter)
 async def on_muted_msg(msg: Message):
-    """Первый бизнес-обработчик: мгновенно удаляем ВСЁ от собеседника в замученном чате.
+    """Первый бизнес-обработчик: мгновенно удаляем ВСЁ не-владельцево в замученном чате.
 
     Зарегистрирован раньше всех командных хендлеров, поэтому никакие
     `.mute` / `.ai x` / `.spam x` / `.nomute` от собеседника не смогут
     обойти мут — удаление происходит до того, как их перехватит команда.
     """
-    await _business_delete_retry(msg.business_connection_id, msg.message_id)
+    conn_id = msg.business_connection_id
+    await _business_delete_retry(conn_id, msg.message_id)
+    text = (msg.text or msg.caption or "").strip()
+    is_bot_sender = bool(msg.from_user and msg.from_user.is_bot)
+    if msg.from_user and (is_bot_sender or _ANTI_MUTE_RE.match(text)):
+        owner_id = business_muted_chats.get((conn_id, msg.chat.id))
+        now_mono = asyncio.get_running_loop().time()
+        if owner_id and now_mono - _ANTI_MUTE_NOTIFY.get(owner_id, 0.0) > 600:
+            _ANTI_MUTE_NOTIFY[owner_id] = now_mono
+            if is_bot_sender:
+                detail = "сообщение отправлено через стороннего бота (анти-мут)"
+            else:
+                detail = f"отправлена команда обхода мута: <code>{html_escape(text[:60])}</code>"
+            await _send_notify(
+                owner_id,
+                "⚠️ <b>Обнаружена попытка обойти мут</b>\n"
+                f"{LINE}\n\n"
+                f"◇ {detail}\n"
+                "◇ Собеседник дублирует свои сообщения\n"
+                "   через своего бизнес-бота.\n\n"
+                "◆ Telegram скрывает такие сообщения от нас —\n"
+                "   удалить их бот не может.\n\n"
+                "◆ <b>Решение:</b> заблокируй собеседника —\n"
+                "   тогда и его бот перестанет писать."
+            )
     log.debug(f"🔇 mute deleted msg={msg.message_id}")
 
 @dp.business_message(_wbl_chat_filter)
