@@ -1020,10 +1020,10 @@ async def on_edited_business_msg(msg: Message):
         "file_id":    file_id,
     })
     log.debug(f"✏️ updated msg={msg.message_id} owner={owner_id} bot_edit={is_bot_edit}")
-_MIME_BY_EXT = {
-    ".oga": "audio/ogg",
-    ".ogg": "audio/ogg",
-    ".mp4": "video/mp4",
+_WHISPER_FILE_MAP = {
+    ".oga": ("voice.ogg", "audio/ogg"),
+    ".ogg": ("voice.ogg", "audio/ogg"),
+    ".mp4": ("video_note.mp4", "video/mp4"),
 }
 
 async def _transcribe_voice(file_id: str) -> Optional[str]:
@@ -1036,9 +1036,8 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
                     return None
                 audio_bytes = await resp.read()
         import io
-        fname = (file.file_path or "").split("/")[-1] or "voice.ogg"
-        ext = os.path.splitext(fname)[1].lower()
-        content_type = _MIME_BY_EXT.get(ext, "application/octet-stream")
+        ext = os.path.splitext(file.file_path or "")[1].lower()
+        fname, content_type = _WHISPER_FILE_MAP.get(ext, ("voice.ogg", "audio/ogg"))
         for api_key in GROQ_API_KEYS:
             try:
                 form = aiohttp.FormData()
@@ -1055,7 +1054,10 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
                         if resp.status == 200:
                             await db.record_stat("whisper_ok")
                             return (await resp.text()).strip()
-                        log.warning(f"Whisper key failed (status={resp.status}) — пробую следующий ключ")
+                        _whisper_err = (await resp.text())[:300]
+                        log.warning(
+                            f"Whisper key failed (status={resp.status}, body={_whisper_err}) — пробую следующий ключ"
+                        )
             except Exception as e:
                 log.warning(f"Whisper transcribe (key attempt): {e}")
         await db.record_stat("whisper_fail")
@@ -2151,10 +2153,21 @@ async def on_group_msg(msg: Message):
                     answer=f"🎤 <b>Расшифровка {media_label}:</b>\n{LINE}\n{html_escape(transcript)}",
                 )
             else:
-                await thinking.delete()
+                await _edit_ai_html(
+                    thinking,
+                    prefix="",
+                    answer="😔 <b>Не удалось расшифровать</b> — попробуй ещё раз.",
+                )
         except Exception as e:
             log.error(f"group voice/video transcription: {e}")
             try:
-                await thinking.delete()
+                await _edit_ai_html(
+                    thinking,
+                    prefix="",
+                    answer="😔 <b>Не удалось расшифровать</b> — попробуй ещё раз.",
+                )
             except Exception:
-                pass
+                try:
+                    await thinking.delete()
+                except Exception:
+                    pass
