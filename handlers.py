@@ -2117,3 +2117,25 @@ async def on_group_msg(msg: Message):
                 msg.from_user.username or "",
                 msg.from_user.full_name or "",
             )
+    if msg.voice:
+        try:
+            thinking = await msg.reply("🎤 Расшифровываю…")
+        except Exception as e:
+            log.error(f"group voice thinking reply: {e}")
+            return
+        try:
+            transcript = await _transcribe_voice(msg.voice.file_id)
+            if transcript:
+                await _edit_ai_html(
+                    thinking,
+                    prefix="",
+                    answer=f"🎤 <b>Расшифровка голосового:</b>\n{LINE}\n{html_escape(transcript)}",
+                )
+            else:
+                await thinking.delete()
+        except Exception as e:
+            log.error(f"group voice transcription: {e}")
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
