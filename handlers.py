@@ -1026,8 +1026,7 @@ _WHISPER_FILE_MAP = {
     ".mp4": ("video_note.mp4", "video/mp4"),
 }
 
-# ── Сворачивание длинных расшифровок (кнопка «Тык») ──────────────────
-_TRANSCRIPT_COLLAPSE_MIN = 100   # длиннее — сворачиваем в «Тык»
+# ── Сворачивание расшифровок (кнопка «Тык») ──────────────────
 _TRANSCRIPT_MAX_MSG     = 4000   # безопасный лимит Telegram на сообщение
 _TRANSCRIPT_CACHE: dict[str, dict] = {}
 _TRANSCRIPT_CACHE_MAX  = 300
@@ -1058,11 +1057,8 @@ def _cache_transcript(label: str, text: str) -> str:
             _TRANSCRIPT_CACHE.pop(k, None)
     return token
 
-def _tsc_teaser(label: str, preview: str = "") -> str:
-    text = f"🎤 <b>Расшифровка {label}:</b>\n{LINE}\n👆 <b>Тык</b> — откроется полный текст"
-    if preview:
-        text += f"\n\n<i>{preview}</i>"
-    return text
+def _tsc_teaser(label: str) -> str:
+    return f"🎤 <b>Расшифровка {label}:</b>\n{LINE}\n👆 <b>Тык</b> — откроется полный текст"
 
 def _tsc_kb(token: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1231,10 +1227,9 @@ async def cb_hide_transcript(call: CallbackQuery):
             pass
     if entry:
         entry["chunks"] = []
-    preview = html_escape((entry or {}).get("text", "")[:90])
     try:
         await call.message.edit_text(
-            _tsc_teaser(label, preview),
+            _tsc_teaser(label),
             reply_markup=_tsc_kb(token),
         )
     except Exception as e:
@@ -2271,21 +2266,14 @@ async def on_group_msg(msg: Message):
             file_id = (msg.voice or msg.video_note).file_id
             transcript = await _transcribe_voice(file_id)
             if transcript:
-                if len(transcript) > _TRANSCRIPT_COLLAPSE_MIN:
-                    token = _cache_transcript(media_label, transcript)
-                    try:
-                        await thinking.edit_text(
-                            _tsc_teaser(media_label, html_escape(transcript[:90])),
-                            reply_markup=_tsc_kb(token),
-                        )
-                    except Exception as e:
-                        log.error(f"group voice teaser edit: {e}")
-                else:
-                    await _edit_ai_html(
-                        thinking,
-                        prefix="",
-                        answer=f"🎤 <b>Расшифровка {media_label}:</b>\n{LINE}\n{html_escape(transcript)}",
+                token = _cache_transcript(media_label, transcript)
+                try:
+                    await thinking.edit_text(
+                        _tsc_teaser(media_label),
+                        reply_markup=_tsc_kb(token),
                     )
+                except Exception as e:
+                    log.error(f"group voice teaser edit: {e}")
             else:
                 await _edit_ai_html(
                     thinking,
