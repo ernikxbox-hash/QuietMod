@@ -57,10 +57,12 @@ from functions import (
     _show_home,
 )
 from business_api import (
+    _business_copy_message,
     _business_delete_retry,
     _business_edit_message,
     _business_edit_message_ex,
     _business_send_message_ex,
+    _business_send_photo_ex,
 )
 _BC_OWNER_CACHE: dict[str, tuple[int, float]] = {}
 _BC_OWNER_TTL_SECONDS = 10 * 60
@@ -149,6 +151,71 @@ async def on_wbl_msg(msg: Message):
     """Первый бизнес-обработчик: мгновенно удаляем мат/флуд от собеседника в WBL-чате."""
     await _business_delete_retry(msg.business_connection_id, msg.message_id)
     log.debug(f"🧹 wbl deleted msg={msg.message_id}")
+
+async def _nomute_chat_filter(msg: Message) -> bool:
+    """True, если сообщение ВЛАДЕЛЬЦА в анти-мут чате нужно переслать через бота.
+
+    Копия, отправленная через бизнес-подключение, невидима чужим ботам —
+    их мут её не видит и не удаляет. Команды не трогаем.
+    """
+    if not msg.business_connection_id:
+        return False
+    if getattr(msg.chat, "type", None) != "private":
+        return False
+    owner = business_nomute_chats.get((msg.business_connection_id, msg.chat.id))
+    if owner is None:
+        return False
+    if not msg.from_user or msg.from_user.id != owner:
+        return False
+    if msg.business_connection_id in business_code_mode:
+        return False
+    text = (msg.text or msg.caption or "").strip()
+    if text.startswith("."):
+        return False
+    return True
+
+async def _nomute_fallback_send(msg: Message) -> bool:
+    """Если copyMessage не удался (оригинал уже мог удалить чужой мут) —
+    дублируем контент заново: текст через sendMessage, фото через sendPhoto.
+    Новое сообщение не зависит от существования оригинала."""
+    conn_id = msg.business_connection_id
+    chat_id = msg.chat.id
+    caption = (msg.caption or "").strip()
+    if msg.photo:
+        ok, _, _ = await _business_send_photo_ex(conn_id, chat_id, msg.photo[-1].file_id, caption)
+        return ok
+    text = (msg.text or "").strip()
+    if text:
+        ok, retry_after, _ = await _business_send_message_ex(conn_id, chat_id, text)
+        if not ok and retry_after:
+            await asyncio.sleep(min(int(retry_after), 5))
+            ok, _, _ = await _business_send_message_ex(conn_id, chat_id, text)
+        return ok
+    return False
+
+@dp.business_message(_nomute_chat_filter)
+async def on_nomute_forward(msg: Message):
+    """Анти-анти-мут: копируем сообщение владельца через бизнес-подключение
+    (копия невидима чужим ботам) и удаляем оригинал, чтобы не было дублей."""
+    conn_id = msg.business_connection_id
+    chat_id = msg.chat.id
+    ok = False
+    new_id = None
+    err = None
+    for attempt in range(2):
+        ok, new_id, err = await _business_copy_message(conn_id, chat_id, chat_id, msg.message_id)
+        if ok:
+            break
+        if attempt == 0:
+            await asyncio.sleep(0.15)
+    if not ok:
+        ok = await _nomute_fallback_send(msg)
+        new_id = None
+    if ok:
+        await _business_delete_retry(conn_id, msg.message_id)
+        log.debug(f"🛡️ nomute forwarded {msg.message_id} -> {new_id} chat={chat_id}")
+    else:
+        log.warning(f"🛡️ nomute forward failed chat={chat_id}: {err}")
 
 @dp.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
@@ -385,6 +452,77 @@ async def cb_unmute_btn(call: CallbackQuery):
             f"<code>{LINE}</code>\n\n"
             "◇ Пользователь <b>размучен</b>\n"
             "◇ Сообщения снова доставляются\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
+@dp.business_message(F.text.regexp(r"(?i)^\.nomute(\s+off)?$"))
+async def on_nomute_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".nomute")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_nomute_chats[(msg.business_connection_id, msg.chat.id)] = owner_id
+    nomute_kb = {"inline_keyboard": [[{"text": "🔴 Выключить анти-мут", "callback_data": "nomute_off_btn"}]]}
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "🛡️ <b>АНТИ-МУТ ВКЛЮЧЁН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Твои сообщения идут через бота\n"
+            "◇ Чужие муты их не видят и не удаляют\n"
+            "◇ Оригинал удаляется — дублей не будет\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Выключить: кнопка ниже 👇\n"
+            "   или команда <code>.unomute</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup=nomute_kb,
+    )
+@dp.business_message(F.text.regexp(r"(?i)^\.(unomute|nomuteoff)$"))
+async def on_unomute_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".unomute")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_nomute_chats.pop((msg.business_connection_id, msg.chat.id), None)
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Анти-мут выключен")
+@dp.callback_query(F.data == "nomute_off_btn")
+async def cb_nomute_off_btn(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось выключить анти-мут", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "nomute_off_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может выключить анти-мут", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    key = (conn_id, chat_id)
+    if key not in business_nomute_chats:
+        await call.answer("◇ Анти-мут уже выключен", show_alert=False)
+    else:
+        business_nomute_chats.pop(key, None)
+        await call.answer("✅ Анти-мут выключен", show_alert=False)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        (
+            "🛡️ <b>АНТИ-МУТ ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Сообщения снова идут напрямую\n"
+            "◇ Чужие муты снова могут их видеть\n\n"
             f"— 👁️ @{BOT_USERNAME}"
         ),
         reply_markup={"inline_keyboard": []},
@@ -1422,7 +1560,7 @@ async def cb_knb_cancel(call: CallbackQuery):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".nomute", ".unomute", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
@@ -1509,6 +1647,17 @@ async def on_edited_business_msg(msg: Message):
     )
     sender_id = msg.from_user.id if msg.from_user else None
     is_owner_edit = (sender_id == owner_id)
+    if (
+        sender_id == owner_id
+        and (msg.business_connection_id, msg.chat.id) in business_nomute_chats
+    ):
+        # В анти-мут чате пере-копируем отредактированное сообщение владельца
+        ok, _, _ = await _business_copy_message(
+            msg.business_connection_id, msg.chat.id, msg.chat.id, msg.message_id
+        )
+        if ok:
+            await _business_delete_retry(msg.business_connection_id, msg.message_id)
+        return
     if not is_bot_edit and not is_owner_edit:
         cached = await db.get_message(owner_id, msg.message_id)
         old_text = cached["text"] if cached else None

@@ -76,6 +76,60 @@ async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tu
         return False, None, str(e)
 
 
+async def _business_copy_message(conn_id: str, chat_id: int, from_chat_id: int, message_id: int) -> tuple[bool, int | None, str | None]:
+    """copyMessage через бизнес-подключение: копия уходит от имени бизнес-аккаунта.
+
+    Копия, отправленная ботом, невидима другим ботам (Telegram не доставляет
+    сообщения от ботов другим ботам) — значит, чужой мут её не увидит и не удалит.
+    Возвращает (ok, новый message_id, ошибка).
+    """
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/copyMessage"
+    payload = {
+        "business_connection_id": conn_id,
+        "chat_id": chat_id,
+        "from_chat_id": from_chat_id,
+        "message_id": message_id,
+    }
+    try:
+        session = _session()
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            data = await resp.json()
+            if not data.get("ok"):
+                description = data.get("description")
+                log.warning(f"copyMessage API error: {description}")
+                return False, None, description
+            result = data.get("result") or {}
+            return True, result.get("message_id"), None
+    except Exception as e:
+        log.warning(f"copyMessage HTTP: {e}")
+        return False, None, str(e)
+
+
+async def _business_send_photo_ex(conn_id: str, chat_id: int, file_id: str, caption: str = "") -> tuple[bool, int | None, str | None]:
+    """sendPhoto через бизнес-подключение (фолбэк анти-мута для фото)."""
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    payload = {
+        "business_connection_id": conn_id,
+        "chat_id": chat_id,
+        "photo": file_id,
+    }
+    if caption:
+        payload["caption"] = caption
+    try:
+        session = _session()
+        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            data = await resp.json()
+            if not data.get("ok"):
+                description = data.get("description")
+                log.warning(f"sendPhoto API error: {description}")
+                return False, None, description
+            result = data.get("result") or {}
+            return True, result.get("message_id"), None
+    except Exception as e:
+        log.warning(f"sendPhoto HTTP: {e}")
+        return False, None, str(e)
+
+
 async def _business_delete_message_ex(conn_id: str, msg_id: int) -> tuple[bool, int | None, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteBusinessMessages"
     payload = {

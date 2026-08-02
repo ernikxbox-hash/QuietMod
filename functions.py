@@ -50,6 +50,7 @@ user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner
 knb_games: dict[tuple, dict] = {}  # ("dm"|"bg", conn_id, chat_id) или ("group", chat_id) -> состояние игры .knb
 business_code_mode: set[str] = set()
 business_wbl_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id
+business_nomute_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id — анти-мут: сообщения владельца идут через бота (невидимы чужим ботам)
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
 MAX_MSG_CACHE = 200
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
@@ -457,6 +458,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".knb @friend",
         "note": "Секретные ходы · случайный первый ход · счёт на реваншах"
     },
+    "nomute": {
+        "title": "🛡️ .nomute",
+        "desc": "Анти-анти-мут: твои сообщения пересылаются через бота — чужие муты их не видят.",
+        "usage": ".nomute — включить · .unomute — выключить",
+        "example": ".nomute",
+        "note": "Работает в приватных бизнес-чатах"
+    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -509,7 +517,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "price", "knb",
+    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "nomute", "price", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
