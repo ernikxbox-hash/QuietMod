@@ -550,6 +550,16 @@ async def _peek_worker(conn_id: str, chat_id: int, seconds: int):
         log.error(f"👀 peek worker: {e}")
     finally:
         business_peek_tasks.pop(key, None)
+_peek_chooser: dict[int, dict] = {}  # owner_id -> {"seconds": int, "chats": {idx: (conn_id, chat_id, name)}}
+
+async def _start_peek(conn_id: str, chat_id: int, seconds: int) -> None:
+    """Запустить «печатает...» в бизнес-чате (новая команда гасит предыдущую)."""
+    key = (conn_id, chat_id)
+    existing = business_peek_tasks.get(key)
+    if existing and not existing.done():
+        existing.cancel()
+    business_peek_tasks[key] = asyncio.create_task(_peek_worker(conn_id, chat_id, seconds))
+
 @dp.business_message(F.text.regexp(r"(?i)^\.peek(\s+\d+)?\s*$"))
 async def on_peek_inline(msg: Message):
     if not msg.business_connection_id:
@@ -567,16 +577,105 @@ async def on_peek_inline(msg: Message):
         await _business_delete_retry(msg.business_connection_id, msg.message_id)
         return
     seconds = max(1, min(int(m.group(1)), 120))
-    key = (msg.business_connection_id, msg.chat.id)
-    existing = business_peek_tasks.get(key)
-    if existing and not existing.done():
-        existing.cancel()
-    business_peek_tasks[key] = asyncio.create_task(
-        _peek_worker(msg.business_connection_id, msg.chat.id, seconds)
-    )
+    await _start_peek(msg.business_connection_id, msg.chat.id, seconds)
     # Стелс: саму команду удаляем, чтобы собеседник её не увидел
     await _business_delete_retry(msg.business_connection_id, msg.message_id)
     log.info(f"👀 .peek {seconds}s chat={msg.chat.id}")
+
+@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.peek(\s+(stop|\d+))?\s*$"), F.chat.type == "private")
+async def on_peek_dm(msg: Message):
+    """`.peek` из ЛС с ботом: показать «печатает...» в выбранном бизнес-чате.
+    `.peek` / `.peek N` — выбор чата кнопками, `.peek stop` — остановить всё."""
+    if not msg.from_user:
+        return
+    uid = msg.from_user.id
+    raw = (msg.text or "").strip().lower()
+    if "stop" in raw:
+        _peek_chooser.pop(uid, None)  # гасим и незакрытые окна выбора чата
+        conns = {c for (c, _) in business_chats_by_owner.get(uid, {})}
+        stopped = 0
+        for (conn_id, _), task in list(business_peek_tasks.items()):
+            if conn_id in conns and not task.done():
+                task.cancel()
+                stopped += 1
+        await msg.answer("◇ «Печатает...» остановлено" if stopped else "◇ Активных «печатает...» нет")
+        return
+    m = re.match(r"(?i)^\.peek\s*(\d+)?\s*$", raw)
+    seconds = 10 if not m or not m.group(1) else max(1, min(int(m.group(1)), 120))
+    chats = business_chats_by_owner.get(uid)
+    if not chats:
+        await msg.answer(
+            "👀 <b>.peek из ЛС</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ У меня нет твоих бизнес-чатов.\n"
+            "◇ Напиши кому-нибудь через бизнес-подключение\n"
+            "   хотя бы раз — бот запомнит чат,\n"
+            "   и `.peek` заработает."
+        )
+        return
+    if len(chats) == 1:
+        (conn_id, chat_id), name = next(iter(chats.items()))
+        await _start_peek(conn_id, chat_id, seconds)
+        await msg.answer(
+            f"👀 <b>Печатает в «{html_escape(name)}»</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            f"◇ Держу «печатает...» <b>{seconds} сек</b>\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        )
+        return
+    _peek_chooser[uid] = {
+        "seconds": seconds,
+        "chats": {i: (conn_id, chat_id, name) for i, ((conn_id, chat_id), name) in enumerate(chats.items())},
+    }
+    rows = [
+        [InlineKeyboardButton(text=f"👀 {html_escape(name)}", callback_data=f"peek_pick_{i}")]
+        for i, (_, name) in enumerate(chats.items())
+    ]
+    rows.append([InlineKeyboardButton(text="✕ Отмена", callback_data="peek_pick_cancel")])
+    await msg.answer(
+        f"👀 <b>В каком чате печатать?</b>\n"
+        f"<code>{LINE}</code>\n\n"
+        f"◇ <b>{seconds} сек</b> · выбери чат 👇\n"
+        f"— 👁️ @{BOT_USERNAME}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+
+@dp.callback_query(F.data.startswith("peek_pick_"))
+async def cb_peek_pick(call: CallbackQuery):
+    uid = call.from_user.id
+    if call.data == "peek_pick_cancel":
+        _peek_chooser.pop(uid, None)
+        await call.answer("Отменено", show_alert=False)
+        try:
+            await call.message.edit_text("◇ Отменено", reply_markup=InlineKeyboardMarkup(inline_keyboard=[]))
+        except Exception:
+            pass
+        return
+    try:
+        idx = int(call.data[len("peek_pick_"):])
+    except ValueError:
+        await call.answer("⛔ Ошибка выбора", show_alert=True)
+        return
+    state = _peek_chooser.get(uid)
+    if not state or idx not in state.get("chats", {}):
+        await call.answer("⛔ Выбор устарел — попробуй ещё раз: .peek", show_alert=True)
+        return
+    conn_id, chat_id, name = state["chats"][idx]
+    seconds = state.get("seconds", 10)
+    _peek_chooser.pop(uid, None)
+    await _start_peek(conn_id, chat_id, seconds)
+    try:
+        await call.message.edit_text(
+            f"👀 <b>Печатает в «{html_escape(name)}»</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            f"◇ Держу «печатает...» <b>{seconds} сек</b>\n"
+            f"— 👁️ @{BOT_USERNAME}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
+        )
+    except Exception:
+        pass
+    await call.answer("✅ Печатает", show_alert=False)
+    log.info(f"👀 .peek dm {seconds}s chat={chat_id}")
 @dp.business_message(F.text.regexp(r"(?i)^\.afk(\s+.*)?$"))
 async def on_afk_inline(msg: Message):
     if not msg.business_connection_id:
@@ -1610,10 +1709,20 @@ async def cb_knb_cancel(call: CallbackQuery):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".nomute", ".unomute", ".peek", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
-        return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
+        return
+    # Трекинг бизнес-чатов владельца — нужно для .peek из ЛС с ботом
+    chat_name = (
+        msg.chat.title
+        or getattr(msg.chat, "full_name", None)
+        or (msg.chat.username or "")
+        or "Чат"
+    )
+    business_chats_by_owner.setdefault(owner_id, {})[
+        (msg.business_connection_id, msg.chat.id)
+    ] = chat_name
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".nomute", ".unomute", ".peek", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     # Владелец реально что-то отправил — фейковая «печатает...» останавливается
     if msg.from_user and msg.from_user.id == owner_id:

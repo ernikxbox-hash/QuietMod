@@ -52,6 +52,7 @@ business_code_mode: set[str] = set()
 business_wbl_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id
 business_nomute_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id — анти-мут: сообщения владельца идут через бота (невидимы чужим ботам)
 business_peek_tasks: dict[tuple[str, int], asyncio.Task] = {}  # (conn_id, chat_id) -> задача «печатает...» (.peek)
+business_chats_by_owner: dict[int, dict[tuple[str, int], str]] = {}  # owner_id -> {(conn_id, chat_id): имя чата} — для .peek из ЛС
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
 MAX_MSG_CACHE = 200
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
