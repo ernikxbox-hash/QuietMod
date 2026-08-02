@@ -391,6 +391,12 @@ async def cb_unafk_btn(call: CallbackQuery):
         ),
         reply_markup={"inline_keyboard": []},
     )
+def _disable_afk(uid: int):
+    """Полностью выключить AFK пользователя: глобальный и во всех бизнес-чатах."""
+    user_afk.pop(uid, None)
+    for conn_id in [c for c, a in business_afk.items() if a.get("owner_id") == uid]:
+        business_afk.pop(conn_id, None)
+    business_afk_last_reply.clear()
 @dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.afk(\s+.*)?$"), F.chat.type == "private")
 async def on_afk_private(msg: Message):
     """Включить AFK из ЛС с ботом: автоответ во всех бизнес-чатах владельца."""
@@ -414,8 +420,12 @@ async def on_afk_private(msg: Message):
         "   придёт автоответ"
         f"{note_line}\n\n"
         f"<code>{LINE}</code>\n"
-        "◇ Выключить: <code>.unafk</code>\n\n"
-        f"— 👁️ @{BOT_USERNAME}"
+        "◇ Выключить: кнопка ниже 👇\n"
+        "   или команда <code>.unafk</code>\n\n"
+        f"— 👁️ @{BOT_USERNAME}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔴 Выключить AFK", callback_data="unafk_dm")]
+        ]),
     )
 @dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.unafk$"), F.chat.type == "private")
 async def on_unafk_private(msg: Message):
@@ -423,11 +433,25 @@ async def on_unafk_private(msg: Message):
     if not msg.from_user:
         return
     uid = msg.from_user.id
-    user_afk.pop(uid, None)
-    for conn_id in [c for c, a in business_afk.items() if a.get("owner_id") == uid]:
-        business_afk.pop(conn_id, None)
-    business_afk_last_reply.clear()
+    _disable_afk(uid)
     await msg.answer("◇ AFK выключен")
+@dp.callback_query(F.data == "unafk_dm")
+async def cb_unafk_dm(call: CallbackQuery):
+    """Кнопка «Выключить AFK» в ЛС с ботом (сбрасывает и бизнес-чаты)."""
+    uid = call.from_user.id
+    _disable_afk(uid)
+    await call.answer("✅ AFK выключен", show_alert=False)
+    try:
+        await call.message.edit_text(
+            f"🌙 <b>AFK ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Автоответ <b>выключен</b>\n"
+            "◇ Снова на связи\n\n"
+            f"— 👁️ @{BOT_USERNAME}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
+        )
+    except Exception:
+        pass
 @dp.business_message(F.text.regexp(r"(?i)^\.code$"))
 async def on_code_inline(msg: Message):
     if not msg.business_connection_id:
