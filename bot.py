@@ -3,6 +3,7 @@ import signal
 import database as db
 from core import ADMIN_ID, bot, dp, log
 from tasks import _purge_loop
+from business_api import _close_http
 import handlers
 
 async def _sync_bot_chats():
@@ -67,5 +68,9 @@ async def main():
             except (asyncio.CancelledError, Exception):
                 pass
         await db.close_db()
+        try:
+            await _close_http()
+        except Exception:
+            pass
 if __name__ == "__main__":
     asyncio.run(main())

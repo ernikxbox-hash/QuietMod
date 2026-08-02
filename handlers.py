@@ -57,7 +57,7 @@ from functions import (
     _show_home,
 )
 from business_api import (
-    _business_delete_message_ex,
+    _business_delete_retry,
     _business_edit_message,
     _business_edit_message_ex,
     _business_send_message_ex,
@@ -77,6 +77,43 @@ async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
         return None
     _BC_OWNER_CACHE[conn_id] = (owner_id, now + _BC_OWNER_TTL_SECONDS)
     return owner_id
+async def _muted_chat_filter(msg: Message) -> bool:
+    """True, если сообщение пришло в замученный приватный чат от собеседника."""
+    if not msg.business_connection_id or not msg.from_user:
+        return False
+    if getattr(msg.chat, "type", None) != "private":
+        return False
+    owner = business_muted_chats.get((msg.business_connection_id, msg.chat.id))
+    return owner is not None and msg.from_user.id != owner
+
+async def _wbl_chat_filter(msg: Message) -> bool:
+    """True, если сообщение от собеседника в WBL-чате и его нужно удалить (мат/флуд)."""
+    if not msg.business_connection_id or not msg.from_user:
+        return False
+    if getattr(msg.chat, "type", None) != "private":
+        return False
+    owner = business_wbl_chats.get((msg.business_connection_id, msg.chat.id))
+    if owner is None or msg.from_user.id == owner:
+        return False
+    return _wbl_should_delete((msg.text or msg.caption or ""))
+
+@dp.business_message(_muted_chat_filter)
+async def on_muted_msg(msg: Message):
+    """Первый бизнес-обработчик: мгновенно удаляем ВСЁ от собеседника в замученном чате.
+
+    Зарегистрирован раньше всех командных хендлеров, поэтому никакие
+    `.mute` / `.ai x` / `.spam x` / `.nomute` от собеседника не смогут
+    обойти мут — удаление происходит до того, как их перехватит команда.
+    """
+    await _business_delete_retry(msg.business_connection_id, msg.message_id)
+    log.debug(f"🔇 mute deleted msg={msg.message_id}")
+
+@dp.business_message(_wbl_chat_filter)
+async def on_wbl_msg(msg: Message):
+    """Первый бизнес-обработчик: мгновенно удаляем мат/флуд от собеседника в WBL-чате."""
+    await _business_delete_retry(msg.business_connection_id, msg.message_id)
+    log.debug(f"🧹 wbl deleted msg={msg.message_id}")
+
 @dp.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
@@ -257,7 +294,7 @@ async def on_mute_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_muted_chats.add((msg.business_connection_id, msg.chat.id))
+    business_muted_chats[(msg.business_connection_id, msg.chat.id)] = owner_id
     mute_kb = {"inline_keyboard": [[{"text": "🔴 Размутить", "callback_data": "unmute_btn"}]]}
     await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
@@ -284,7 +321,7 @@ async def on_unmute_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_muted_chats.discard((msg.business_connection_id, msg.chat.id))
+    business_muted_chats.pop((msg.business_connection_id, msg.chat.id), None)
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Mute выключен")
 @dp.callback_query(F.data == "unmute_btn")
 async def cb_unmute_btn(call: CallbackQuery):
@@ -303,7 +340,7 @@ async def cb_unmute_btn(call: CallbackQuery):
     if key not in business_muted_chats:
         await call.answer("◇ Уже размучен", show_alert=False)
     else:
-        business_muted_chats.discard(key)
+        business_muted_chats.pop(key, None)
         await call.answer("✅ Пользователь размучен", show_alert=False)
     await _business_edit_message(
         conn_id, chat_id, call.message.message_id,
@@ -527,7 +564,7 @@ async def on_wbl_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_wbl_chats.add((msg.business_connection_id, msg.chat.id))
+    business_wbl_chats[(msg.business_connection_id, msg.chat.id)] = owner_id
     wbl_kb = {"inline_keyboard": [[{"text": "🔴 Выключить фильтр", "callback_data": "unwbl_btn"}]]}
     await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
@@ -554,7 +591,7 @@ async def on_unwbl_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    business_wbl_chats.discard((msg.business_connection_id, msg.chat.id))
+    business_wbl_chats.pop((msg.business_connection_id, msg.chat.id), None)
     await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Фильтр мата выключен")
 @dp.callback_query(F.data == "unwbl_btn")
 async def cb_unwbl_btn(call: CallbackQuery):
@@ -573,7 +610,7 @@ async def cb_unwbl_btn(call: CallbackQuery):
     if key not in business_wbl_chats:
         await call.answer("◇ Фильтр уже выключен", show_alert=False)
     else:
-        business_wbl_chats.discard(key)
+        business_wbl_chats.pop(key, None)
         await call.answer("✅ Фильтр выключен", show_alert=False)
     await _business_edit_message(
         conn_id, chat_id, call.message.message_id,
@@ -1366,30 +1403,6 @@ async def on_business_msg(msg: Message):
         code_text = f"<pre><code>{html_escape(msg.text)}</code></pre>"
         await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, code_text)
         return
-    if (
-        getattr(msg.chat, "type", None) == "private"
-        and msg.from_user
-        and msg.from_user.id != owner_id
-        and (msg.business_connection_id, msg.chat.id) in business_wbl_chats
-        and _wbl_should_delete((msg.text or msg.caption or ""))
-    ):
-        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
-        if not ok and retry_after:
-            await asyncio.sleep(int(retry_after))
-            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
-        log.debug(f"🧹 wbl deleted msg={msg.message_id} owner={owner_id}")
-        return
-    if (
-        getattr(msg.chat, "type", None) == "private"
-        and msg.from_user
-        and msg.from_user.id != owner_id
-        and (msg.business_connection_id, msg.chat.id) in business_muted_chats
-    ):
-        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
-        if not ok and retry_after:
-            await asyncio.sleep(int(retry_after))
-            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
-        return
     afk = business_afk.get(msg.business_connection_id) or user_afk.get(owner_id)
     if (
         getattr(msg.chat, "type", None) == "private"
@@ -1444,6 +1457,14 @@ async def on_edited_business_msg(msg: Message):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "edit")
     if owner_id is None:
+        return
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
+        and (msg.business_connection_id, msg.chat.id) in business_muted_chats
+    ):
+        await _business_delete_retry(msg.business_connection_id, msg.message_id)
         return
     new_text = msg.text or msg.caption or ""
     is_bot_edit = (

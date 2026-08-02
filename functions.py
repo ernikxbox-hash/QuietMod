@@ -43,13 +43,13 @@ from business_api import _business_edit_message_ex
 ai_history: dict[int, list] = {}
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
-business_muted_chats: set[tuple[str, int]] = set()
+business_muted_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id — для мгновенного удаления без лишних запросов
 business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
 user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner_id, started_at, note}
 knb_games: dict[tuple, dict] = {}  # ("dm"|"bg", conn_id, chat_id) или ("group", chat_id) -> состояние игры .knb
 business_code_mode: set[str] = set()
-business_wbl_chats: set[tuple[str, int]] = set()
+business_wbl_chats: dict[tuple[str, int], int] = {}  # (conn_id, chat_id) -> owner_id
 chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
 MAX_MSG_CACHE = 200
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
