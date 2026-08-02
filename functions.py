@@ -312,13 +312,13 @@ def fmt_sender(from_name: str, username: str) -> str:
     return from_name
 def home_text() -> str:
     return (
-        f"◆ <b>QUIET MOD</b> 👁️\n"
+        f"{pe('👁️')} <b>QUIET MOD</b>\n"
         f"<code>{LINE}</code>\n\n"
-        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
-        f"◇ Перехват     <b>безлимит</b>\n"
-        f"◇ Архив        <b>безлимит</b>\n"
-        f"◇ Поиск        <b>включён</b>\n"
-        f"◇ ИИ           <b>без лимитов</b>\n"
+        f"{pe('✅')} Статус       <b>Свободен · без лимитов</b>\n"
+        f"{pe('👁🗨')} Перехват     <b>безлимит</b>\n"
+        f"{pe('🖼️')} Архив        <b>безлимит</b>\n"
+        f"{pe('🔍')} Поиск        <b>включён</b>\n"
+        f"{pe('🧩')} ИИ           <b>без лимитов</b>\n"
         f"<code>{LINE}</code>"
     )
 _ICON_API_BROKEN = False  # Telegram отверг icon_custom_emoji_id (напр. нет Premium у владельца) — иконки не пробуем снова
@@ -414,7 +414,27 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
         return None
     last_notify_msg[owner_id] = sent_id
     return sent_id
-_CPT_EMOJI: dict[str, str] = {}  # нормализованный эмодзи (placeholder) -> custom_emoji_id из пака CPT_Emoji
+# Статический маппинг: нормализованный эмодзи (placeholder) -> custom_emoji_id из пака CPT_Emoji.
+# ID взяты из реального состава пака — иконки работают даже до загрузки пака и
+# независимо от placeholder'ов. Динамическая загрузка (setdefault) лишь дополняет
+# отсутствующие эмодзи, не перезаписывая эти ID.
+_CPT_EMOJI: dict[str, str] = {
+    # Текст меню
+    "👁": "5348461076503609002",   # Заголовок QUIET MOD
+    "✅": "5348191451341668809",   # Статус
+    "👁🗨": "5348183728990468765",  # Перехват
+    "🖼": "5348039074491939902",  # Архив
+    "🔍": "5345840270279724328",  # Поиск
+    "🧩": "5345957205059321624",  # ИИ
+    # Кнопки главного меню
+    "🛡": "5348129380474306311",  # Admin Suite
+    "👤": "5346136537123801643",  # Профиль
+    "❤": "5348356047373354143",  # Сохранённые
+    "🚫": "5348362704572664028",  # Очистить
+    "⭐": "5348446245981536690",  # Предложить
+    "⚙": "5346115646402869647",  # Подключение
+    "💰": "5348392971207194994",  # Поддержать проект
+}
 _CPT_EMOJI_LOADED = False
 
 
@@ -492,25 +512,25 @@ def _enrich_markup(markup) -> dict | None:
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
-        rows.append([InlineKeyboardButton(text="🛠️ Admin Suite", callback_data="adm")])
+        rows.append([InlineKeyboardButton(text="🛡 Admin Suite", callback_data="adm")])
     rows.append([
-        InlineKeyboardButton(text="🖼️ Архив",        callback_data="show_all"),
-        InlineKeyboardButton(text="👤 Профиль",      callback_data="stats"),
+        InlineKeyboardButton(text="🖼 Архив",          callback_data="show_all"),
+        InlineKeyboardButton(text="👤 Профиль",        callback_data="stats"),
     ])
     rows.append([
-        InlineKeyboardButton(text="🤍 Сохранённые",  callback_data="show_saved"),
+        InlineKeyboardButton(text="❤️ Сохранённые",   callback_data="show_saved"),
     ])
     rows.append([InlineKeyboardButton(text="🔍 Поиск по архиву", callback_data="search")])
-    rows.append([InlineKeyboardButton(text="🔗 ИИ-консьерж — без лимитов", callback_data="ai_open")])
+    rows.append([InlineKeyboardButton(text="🧩 ИИ-консьерж — без лимитов", callback_data="ai_open")])
     rows.append([
-        InlineKeyboardButton(text="👥 Приглашения",  callback_data="referrals"),
-        InlineKeyboardButton(text="🗑️ Очистить",     callback_data="clear_cache"),
+        InlineKeyboardButton(text="👥 Приглашения",    callback_data="referrals"),
+        InlineKeyboardButton(text="🚫 Очистить",       callback_data="clear_cache"),
     ])
     rows.append([
-        InlineKeyboardButton(text="✨ Предложить",   callback_data="suggest_idea"),
-        InlineKeyboardButton(text="⚙️ Подключение",  callback_data="howto"),
+        InlineKeyboardButton(text="⭐ Предложить",     callback_data="suggest_idea"),
+        InlineKeyboardButton(text="⚙️ Подключение",   callback_data="howto"),
     ])
-    rows.append([InlineKeyboardButton(text="💎 Поддержать проект", callback_data="donate")])
+    rows.append([InlineKeyboardButton(text="💰 Поддержать проект", callback_data="donate")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 def kb_back(target: str = "menu", label: str = "🏠 В меню") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
