@@ -1027,7 +1027,7 @@ _WHISPER_FILE_MAP = {
 }
 
 # ── Сворачивание длинных расшифровок (кнопка «Тык») ──────────────────
-_TRANSCRIPT_COLLAPSE_MIN = 400   # длиннее — сворачиваем в «Тык»
+_TRANSCRIPT_COLLAPSE_MIN = 100   # длиннее — сворачиваем в «Тык»
 _TRANSCRIPT_MAX_MSG     = 4000   # безопасный лимит Telegram на сообщение
 _TRANSCRIPT_CACHE: dict[str, dict] = {}
 _TRANSCRIPT_CACHE_MAX  = 300
