@@ -1,5 +1,7 @@
 import logging
 import os
+import aiohttp
+from typing import Optional
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -30,3 +32,20 @@ class S(StatesGroup):
     suggest_idea = State()
     broadcast = State()
     broadcast_groups = State()
+
+_http_session: Optional[aiohttp.ClientSession] = None
+
+def get_http() -> aiohttp.ClientSession:
+    """Общая aiohttp-сессия: переиспользует соединения вместо TLS-рукопожатия на каждый запрос."""
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=30),
+        )
+    return _http_session
+
+async def close_http():
+    global _http_session
+    if _http_session is not None and not _http_session.closed:
+        await _http_session.close()
+        _http_session = None

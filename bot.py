@@ -1,26 +1,28 @@
 import asyncio
 import signal
 import database as db
-from core import ADMIN_ID, bot, dp, log
+from core import ADMIN_ID, bot, close_http, dp, log
 from tasks import _purge_loop
 import handlers
 
 async def _sync_bot_chats():
     chats = await db.get_all_bot_chats()
-    for chat in chats:
-        try:
-            c = await bot.get_chat(chat["id"])
-            member = await bot.get_chat_member(chat["id"], bot.id)
-            if member.status in ("left", "kicked"):
-                await db.remove_bot_chat(chat["id"])
-                log.info(f"🧹 Бот больше не в чате {chat['id']} ({chat.get('title', '?')}) — удалён из БД")
-        except Exception:
-            await db.remove_bot_chat(chat["id"])
-            log.info(f"🧹 Чат {chat['id']} недоступен — удалён из БД")
-    if chats:
-        log.info(f"📌 Синхронизация чатов завершена: {len(chats)} проверено")
-    else:
+    if not chats:
         log.info("📌 Нет сохранённых чатов — бот подхватит их при первом сообщении в группе")
+        return
+    sem = asyncio.Semaphore(8)
+    async def _check(chat):
+        async with sem:
+            try:
+                member = await bot.get_chat_member(chat["id"], bot.id)
+                if member.status in ("left", "kicked"):
+                    await db.remove_bot_chat(chat["id"])
+                    log.info(f"🧹 Бот больше не в чате {chat['id']} ({chat.get('title', '?')}) — удалён из БД")
+            except Exception:
+                await db.remove_bot_chat(chat["id"])
+                log.info(f"🧹 Чат {chat['id']} недоступен — удалён из БД")
+    await asyncio.gather(*(_check(c) for c in chats))
+    log.info(f"📌 Синхронизация чатов завершена: {len(chats)} проверено")
 
 async def main():
     await db.init_db()
@@ -67,5 +69,6 @@ async def main():
             except (asyncio.CancelledError, Exception):
                 pass
         await db.close_db()
+        await close_http()
 if __name__ == "__main__":
     asyncio.run(main())

@@ -36,6 +36,7 @@ from core import (
     GROQ_MODEL_TEXT,
     S,
     bot,
+    get_http,
     log,
 )
 from business_api import _business_edit_message_ex
@@ -331,14 +332,17 @@ async def _show_home(uid: int, text: str, reply_markup, target_msg: "Message | N
     else:
         sent = await bot.send_message(uid, text, reply_markup=reply_markup)
     home_msg[uid] = sent.message_id
+async def _delete_notify_quiet(owner_id: int, msg_id: int):
+    try:
+        await bot.delete_message(owner_id, msg_id)
+    except Exception:
+        pass
+
 async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[int]:
     old_id = last_notify_msg.get(owner_id)
     if old_id:
-        try:
-            await bot.delete_message(owner_id, old_id)
-        except Exception:
-            pass
         last_notify_msg.pop(owner_id, None)
+        asyncio.create_task(_delete_notify_quiet(owner_id, old_id))
     try:
         sent = await bot.send_message(owner_id, text, reply_markup=reply_markup)
         last_notify_msg[owner_id] = sent.message_id
@@ -565,12 +569,12 @@ async def _get_image_base64(bot: Bot, file_id: str) -> Optional[str]:
     try:
         file = await bot.get_file(file_id)
         url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-                if resp.status == 200:
-                    import base64
-                    data = await resp.read()
-                    return base64.b64encode(data).decode("utf-8")
+        session = get_http()
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+            if resp.status == 200:
+                import base64
+                data = await resp.read()
+                return base64.b64encode(data).decode("utf-8")
     except Exception as e:
         log.warning(f"Image download: {e}")
     return None
@@ -695,25 +699,25 @@ async def _get_weather(city: str) -> Optional[str]:
     if not city:
         return None
     try:
-        async with aiohttp.ClientSession() as session:
-            loc = await _geocode_city(session, city)
-            if not loc:
+        session = get_http()
+        loc = await _geocode_city(session, city)
+        if not loc:
+            return None
+        async with session.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": loc["latitude"],
+                "longitude": loc["longitude"],
+                "current": "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code",
+                "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+                "forecast_days": 2,
+                "timezone": "auto",
+            },
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
                 return None
-            async with session.get(
-                "https://api.open-meteo.com/v1/forecast",
-                params={
-                    "latitude": loc["latitude"],
-                    "longitude": loc["longitude"],
-                    "current": "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code",
-                    "daily": "weather_code,temperature_2m_max,temperature_2m_min",
-                    "forecast_days": 2,
-                    "timezone": "auto",
-                },
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status != 200:
-                    return None
-                wx = await resp.json()
+            wx = await resp.json()
         cur = wx.get("current")
         if not cur:
             return None
@@ -876,21 +880,21 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
     for i in range(n):
         idx = (start + i) % n
         api_key = keys[idx]
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=45),
-                ) as resp:
-                    import json as _json
-                    raw = await resp.text()
-                    try:
-                        data = _json.loads(raw)
+    try:
+        session = get_http()
+        async with session.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=45),
+        ) as resp:
+            import json as _json
+            raw = await resp.text()
+            try:
+                data = _json.loads(raw)
                     except Exception:
                         log.error(
                             f"Groq non-JSON response (key={idx + 1}/{n}, model={model}, "

@@ -17,6 +17,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
+    BusinessConnection,
     BusinessMessagesDeleted,
     CallbackQuery,
     ChatMemberUpdated,
@@ -56,6 +57,7 @@ from functions import (
     _send_notify,
     _show_home,
 )
+from core import get_http
 from business_api import (
     _business_delete_message_ex,
     _business_edit_message,
@@ -77,6 +79,16 @@ async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
         return None
     _BC_OWNER_CACHE[conn_id] = (owner_id, now + _BC_OWNER_TTL_SECONDS)
     return owner_id
+@dp.business_connection()
+async def on_business_connection(conn: BusinessConnection):
+    """Предзагружаем владельца подключения — мьют/перехват работают мгновенно с первого сообщения."""
+    try:
+        _BC_OWNER_CACHE[conn.id] = (
+            conn.user.id,
+            asyncio.get_running_loop().time() + _BC_OWNER_TTL_SECONDS,
+        )
+    except Exception:
+        pass
 @dp.message(CommandStart())
 async def cmd_start(msg: Message, state: FSMContext):
     await state.clear()
@@ -1649,11 +1661,11 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
     try:
         file = await bot.get_file(file_id)
         url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    return None
-                audio_bytes = await resp.read()
+        session = get_http()
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            if resp.status != 200:
+                return None
+            audio_bytes = await resp.read()
         import io
         ext = os.path.splitext(file.file_path or "")[1].lower()
         fname, content_type = _WHISPER_FILE_MAP.get(ext, ("voice.ogg", "audio/ogg"))
@@ -1663,13 +1675,13 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
                 form.add_field("file", io.BytesIO(audio_bytes), filename=fname, content_type=content_type)
                 form.add_field("model", "whisper-large-v3")
                 form.add_field("response_format", "text")
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        "https://api.groq.com/openai/v1/audio/transcriptions",
-                        headers={"Authorization": f"Bearer {api_key}"},
-                        data=form,
-                        timeout=aiohttp.ClientTimeout(total=30),
-                    ) as resp:
+                session = get_http()
+                async with session.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    data=form,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
                         if resp.status == 200:
                             await db.record_stat("whisper_ok")
                             return (await resp.text()).strip()
