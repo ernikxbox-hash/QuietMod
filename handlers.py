@@ -64,6 +64,8 @@ from business_api import (
 )
 _BC_OWNER_CACHE: dict[str, tuple[int, float]] = {}
 _BC_OWNER_TTL_SECONDS = 10 * 60
+_NOMUTE_CONF_CACHE: dict[str, tuple[str, int]] = {}
+_NOMUTE_CONF_CACHE_MAX = 100
 async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
     now = asyncio.get_running_loop().time()
     cached = _BC_OWNER_CACHE.get(conn_id)
@@ -328,21 +330,32 @@ async def on_nomute_inline(msg: Message):
     if not msg.from_user or msg.from_user.id != owner_id:
         return
     business_nomute_chats.add((msg.business_connection_id, msg.chat.id))
-    nomute_kb = {"inline_keyboard": [[{"text": "🔴 Выключить nomute", "callback_data": "unnomute_btn"}]]}
-    await _business_edit_message(
-        msg.business_connection_id, msg.chat.id, msg.message_id,
-        (
-            "🛡️ <b>NOMUTE ВКЛЮЧЁН</b>\n"
-            f"<code>{LINE}</code>\n\n"
-            "◇ Твои сообщения дублируются ботом\n"
-            "◇ Если собеседник удаляет их — копия от бота останется\n\n"
-            f"<code>{LINE}</code>\n"
-            "◇ Выключить: кнопка ниже 👇\n"
-            "   или команда <code>.unnomute</code>\n\n"
-            f"— 👁️ @{BOT_USERNAME}"
-        ),
-        reply_markup=nomute_kb,
-    )
+    await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+    token = os.urandom(6).hex()
+    _NOMUTE_CONF_CACHE[token] = (msg.business_connection_id, msg.chat.id)
+    if len(_NOMUTE_CONF_CACHE) > _NOMUTE_CONF_CACHE_MAX:
+        stale = list(_NOMUTE_CONF_CACHE)[:len(_NOMUTE_CONF_CACHE) - _NOMUTE_CONF_CACHE_MAX]
+        for k in stale:
+            _NOMUTE_CONF_CACHE.pop(k, None)
+    try:
+        await bot.send_message(
+            owner_id,
+            (
+                "🛡️ <b>Nomute включён</b>\n"
+                f"<code>{LINE}</code>\n\n"
+                "◇ Твои сообщения дублируются ботом\n"
+                "◇ Если собеседник удаляет их — копия от бота останется\n\n"
+                f"<code>{LINE}</code>\n"
+                "◇ Выключить: кнопка ниже 👇\n"
+                "   или команда <code>.unnomute</code> в чате\n\n"
+                f"— 👁️ @{BOT_USERNAME}"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔴 Выключить nomute", callback_data=f"unnomute_dm_{token}")]
+            ]),
+        )
+    except Exception as e:
+        log.warning(f"nomute dm confirm: {e}")
 @dp.business_message(F.text.regexp(r"(?i)^\.unnomute$"))
 async def on_unnomute_inline(msg: Message):
     if not msg.business_connection_id:
@@ -355,36 +368,46 @@ async def on_unnomute_inline(msg: Message):
     if not msg.from_user or msg.from_user.id != owner_id:
         return
     business_nomute_chats.discard((msg.business_connection_id, msg.chat.id))
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Nomute выключен")
-@dp.callback_query(F.data == "unnomute_btn")
-async def cb_unnomute_btn(call: CallbackQuery):
-    conn_id = getattr(call, "business_connection_id", None)
-    if not conn_id and call.message:
-        conn_id = getattr(call.message, "business_connection_id", None)
-    if not conn_id or not call.message or not call.message.chat:
-        await call.answer("⛔ Не удалось выключить nomute", show_alert=True)
+    await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+    try:
+        await bot.send_message(
+            owner_id,
+            (
+                "🛡️ <b>Nomute выключен</b>\n"
+                f"<code>{LINE}</code>\n\n"
+                "◇ Дублирование сообщений <b>выключено</b>\n\n"
+                f"— 👁️ @{BOT_USERNAME}"
+            ),
+        )
+    except Exception:
+        pass
+@dp.callback_query(F.data.startswith("unnomute_dm_"))
+async def cb_unnomute_dm(call: CallbackQuery):
+    token = call.data[len("unnomute_dm_"):]
+    entry = _NOMUTE_CONF_CACHE.get(token)
+    if not entry:
+        await call.answer("◇ Nomute уже выключен", show_alert=False)
         return
-    owner_id = await _get_owner_id_cached(conn_id, "unnomute_btn")
+    conn_id, chat_id = entry
+    owner_id = await _get_owner_id_cached(conn_id, "unnomute_dm")
     if owner_id is None or call.from_user.id != owner_id:
         await call.answer("⛔ Только владелец может выключить nomute", show_alert=True)
         return
-    chat_id = call.message.chat.id
-    key = (conn_id, chat_id)
-    if key not in business_nomute_chats:
-        await call.answer("◇ Nomute уже выключен", show_alert=False)
-    else:
-        business_nomute_chats.discard(key)
-        await call.answer("✅ Nomute выключен", show_alert=False)
-    await _business_edit_message(
-        conn_id, chat_id, call.message.message_id,
-        (
-            "🛡️ <b>NOMUTE ВЫКЛЮЧЕН</b>\n"
-            f"<code>{LINE}</code>\n\n"
-            "◇ Дублирование сообщений <b>выключено</b>\n\n"
-            f"— 👁️ @{BOT_USERNAME}"
-        ),
-        reply_markup={"inline_keyboard": []},
-    )
+    _NOMUTE_CONF_CACHE.pop(token, None)
+    business_nomute_chats.discard((conn_id, chat_id))
+    await call.answer("✅ Nomute выключен", show_alert=False)
+    try:
+        await call.message.edit_text(
+            (
+                "🛡️ <b>Nomute выключен</b>\n"
+                f"<code>{LINE}</code>\n\n"
+                "◇ Дублирование сообщений <b>выключено</b>\n\n"
+                f"— 👁️ @{BOT_USERNAME}"
+            ),
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
+        )
+    except Exception:
+        pass
 @dp.business_message(F.text.regexp(r"(?i)^\.afk(\s+.*)?$"))
 async def on_afk_inline(msg: Message):
     if not msg.business_connection_id:
