@@ -27,13 +27,17 @@ async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, tex
 async def _business_edit_message(conn_id: str, chat_id: int, msg_id: int, text: str, reply_markup=None) -> bool:
     ok, _ = await _business_edit_message_ex(conn_id, chat_id, msg_id, text, reply_markup=reply_markup)
     return ok
-async def _business_send_message_ex(conn_id: str, chat_id: int, text: str) -> tuple[bool, int | None, str | None]:
+async def _business_send_message_ex(conn_id: str, chat_id: int, text: str, reply_markup=None, parse_mode: str | None = None) -> tuple[bool, int | None, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "business_connection_id": conn_id,
         "chat_id": chat_id,
         "text": text,
     }
+    if reply_markup is not None:
+        payload["reply_markup"] = reply_markup
+    if parse_mode is not None:
+        payload["parse_mode"] = parse_mode
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
