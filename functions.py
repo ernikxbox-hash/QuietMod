@@ -455,6 +455,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".price @alimtona",
         "note": "В бизнес-чате без аргумента — оценит собеседника"
     },
+    "curs": {
+        "title": "💱 .curs",
+        "desc": "Курс популярных валют к рублю — официальные курсы ЦБ РФ, одним сообщением.",
+        "usage": ".curs",
+        "example": ".curs",
+        "note": "Точный источник: ЦБ РФ · работает в ЛС (Business), группах, каналах и в ЛС с ботом"
+    },
     "knb": {
         "title": "⚔️ .knb",
         "desc": "Камень-ножницы-бумага: 1×1 в ЛС и в группах по вызову.",
@@ -514,7 +521,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "knb",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "curs", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
@@ -852,6 +859,143 @@ async def _get_currency_rate(query: str) -> Optional[str]:
     except Exception as e:
         log.warning(f"Currency API error: {e}")
         return None
+
+# ─── .curs — курс популярных валют к рублю ───────────────────────────
+_POPULAR_CURS: list[tuple[str, str, str]] = [
+    ("USD", "🇺🇸", "Доллар"),
+    ("EUR", "🇪🇺", "Евро"),
+    ("GBP", "🇬🇧", "Фунт"),
+    ("CNY", "🇨🇳", "Юань"),
+    ("JPY", "🇯🇵", "Йена"),
+    ("CHF", "🇨🇭", "Франк"),
+    ("KZT", "🇰🇿", "Тенге"),
+    ("UAH", "🇺🇦", "Гривна"),
+    ("TRY", "🇹🇷", "Лира"),
+    ("BYN", "🇧🇾", "Бел. рубль"),
+    ("AED", "🇦🇪", "Дирхам"),
+    ("AMD", "🇦🇲", "Драм"),
+    ("AZN", "🇦🇿", "Манат"),
+    ("GEL", "🇬🇪", "Лари"),
+    ("PLN", "🇵🇱", "Злотый"),
+]
+
+def _fmt_curs_rate(value: float) -> str:
+    """Формат курса для .curs: 92,34 · 1 235 · 0,1923 (запятая как разделитель)"""
+    return _fmt_rate(value).replace(".", ",")
+
+async def _fetch_cbr_rates() -> Optional[tuple[str, dict[str, float]]]:
+    """Официальные курсы ЦБ РФ (точный источник для рубля): (дата, курс за 1 ед.)."""
+    try:
+        session = get_http()
+        async with session.get(
+            "https://www.cbr-xml-daily.ru/daily_json.js",
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                log.warning(f"CBR API status: {resp.status}")
+                return None
+            data = await resp.json()
+        valute = data.get("Valute") or {}
+        if not valute:
+            return None
+        date_str = date.today().strftime("%d.%m.%Y")
+        try:
+            date_str = datetime.fromisoformat(data["Date"]).strftime("%d.%m.%Y")
+        except Exception:
+            pass
+        rates: dict[str, float] = {}
+        for code, _, _ in _POPULAR_CURS:
+            item = valute.get(code)
+            if not item:
+                continue
+            try:
+                value = float(item["Value"])
+                nominal = float(item.get("Nominal") or 1)
+            except (TypeError, ValueError, KeyError, ZeroDivisionError):
+                continue
+            if nominal <= 0 or value < 0:
+                continue
+            rates[code] = value / nominal
+        return (date_str, rates) if rates else None
+    except Exception as e:
+        log.warning(f"CBR API error: {e}")
+        return None
+
+async def _fetch_erapi_rates() -> Optional[dict[str, float]]:
+    """Запасной источник курсов: open.er-api.com (база RUB) — курс за 1 ед."""
+    try:
+        session = get_http()
+        async with session.get(
+            "https://open.er-api.com/v6/latest/RUB",
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                log.warning(f"Curs API status: {resp.status}")
+                return None
+            data = await resp.json()
+        raw = data.get("rates") or {}
+        if not raw:
+            return None
+        rates: dict[str, float] = {}
+        for code, _, _ in _POPULAR_CURS:
+            per_rub = raw.get(code)
+            if per_rub is None:
+                continue
+            try:
+                rates[code] = 1.0 / float(per_rub)
+            except (TypeError, ValueError, ZeroDivisionError):
+                continue
+        return rates or None
+    except Exception as e:
+        log.warning(f"Curs API error: {e}")
+        return None
+
+async def _get_curs_ru() -> Optional[str]:
+    """Курс популярных валют к рублю: 1 ед. = ₽.
+
+    Сначала — официальные курсы ЦБ РФ (точный источник для рубля).
+    Валюты, которых нет у ЦБ (например, гривна), дозаполняются из open.er-api.com.
+    Если ЦБ недоступен — полностью переключаемся на open.er-api.com.
+    """
+    source = "актуальный курс"
+    date_str = date.today().strftime("%d.%m.%Y")
+    rates: dict[str, float] = {}
+    cbr = await _fetch_cbr_rates()
+    if cbr:
+        date_str, cbr_rates = cbr
+        rates.update(cbr_rates)
+        source = "официальный курс ЦБ РФ"
+        missing = [c for c, _, _ in _POPULAR_CURS if c not in rates]
+        if missing:
+            er = await _fetch_erapi_rates()
+            if er:
+                for c in missing:
+                    if c in er:
+                        rates[c] = er[c]
+                source += " · часть валют — er-api"
+    else:
+        er = await _fetch_erapi_rates()
+        if er:
+            rates.update(er)
+    if not rates:
+        return None
+    lines = []
+    for code, flag, name in _POPULAR_CURS:
+        rub = rates.get(code)
+        if rub is None or rub <= 0:
+            continue
+        lines.append(f"{flag} {name:<12} → <code>{_fmt_curs_rate(rub):>10} ₽</code>")
+    if not lines:
+        return None
+    return (
+        "💱 <b>КУРС ВАЛЮТ К РУБЛЮ</b>\n"
+        f"<code>{LINE}</code>\n\n"
+        + "\n".join(lines)
+        + f"\n\n<code>{LINE}</code>\n"
+        f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}\n"
+        f"— 👁️ @{BOT_USERNAME}"
+    )
+
 SEARCH_TRIGGERS = [
     "курс", "цена", "цены", "стоимость", "сколько стоит", "подорожал",
     "погода", "новости", "новость", "событ",

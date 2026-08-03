@@ -45,6 +45,7 @@ from functions import (
     _contains_profanity,
     _wbl_should_delete,
     _edit_ai_html,
+    _get_curs_ru,
     _get_image_base64,
     _price_estimate,
     _reply_ai_html,
@@ -799,6 +800,36 @@ async def on_price_group(msg: Message):
         return
     await _reply_ai_html(msg, prefix="", answer=estimate)
     log.info(f"💰 .price group chat={msg.chat.id} target=@{target}")
+@dp.business_message(F.text.regexp(r"(?i)^\.curs$"))
+async def on_curs_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".curs")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    curs_text = await _get_curs_ru()
+    if curs_text is None:
+        curs_text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
+    await _business_edit_ai_html(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        prefix="", answer=curs_text,
+    )
+    log.info(f"💱 .curs business owner={owner_id} chat={msg.chat.id}")
+@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.curs$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
+async def on_curs_anywhere(msg: Message):
+    if not msg.from_user:
+        return
+    uid = msg.from_user.id
+    await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
+    if msg.chat.type in ("group", "supergroup", "channel"):
+        await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
+    curs_text = await _get_curs_ru()
+    if curs_text is None:
+        curs_text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
+    await _reply_ai_html(msg, prefix="", answer=curs_text)
+    log.info(f"💱 .curs chat={msg.chat.id} user={uid}")
 FORMAT_CMDS: dict[str, tuple[str, str]] = {
     "bold":    ("<b>", "</b>"),
     "italic":  ("<i>", "</i>"),
@@ -1335,7 +1366,7 @@ async def cb_knb_cancel(call: CallbackQuery):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
