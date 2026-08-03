@@ -1,21 +1,14 @@
 import asyncio
-import logging
 import os
 import random
 import re
-import signal
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 import aiohttp
-from ddgs import DDGS
-from aiogram import Bot, Dispatcher, F
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
+from aiogram import F
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     BusinessConnection,
     BusinessMessagesDeleted,
@@ -32,11 +25,11 @@ import database as db
 from core import (
     BOT_TOKEN,
     ADMIN_ID,
-    BRAND_NAME,
     GROQ_API_KEYS,
     S,
     bot,
     dp,
+    get_http,
     log,
 )
 from functions import *
@@ -52,7 +45,6 @@ from functions import (
     _send_notify,
     _show_home,
 )
-from core import get_http
 from business_api import (
     _business_delete_message_ex,
     _business_edit_message,
@@ -1461,12 +1453,6 @@ async def on_business_msg(msg: Message):
         "media_type": media_type,
         "file_id":    file_id,
     })
-    cid = msg.chat.id
-    chat_msg_ids.setdefault(cid, [])
-    if msg.message_id not in chat_msg_ids[cid]:
-        chat_msg_ids[cid].append(msg.message_id)
-        if len(chat_msg_ids[cid]) > MAX_MSG_CACHE:
-            chat_msg_ids[cid] = chat_msg_ids[cid][-MAX_MSG_CACHE:]
     log.debug(f"📥 cached msg={msg.message_id} owner={owner_id}")
 @dp.edited_business_message()
 async def on_edited_business_msg(msg: Message):
@@ -2622,106 +2608,6 @@ async def on_broadcast_groups_input(msg: Message, state: FSMContext):
         f"▤ <b>Рассылка по группам/каналам завершена</b>\n{LINE}\n" + "\n".join(result_parts),
         reply_markup=kb_admin(),
     )
-
-DEVLOG = (
-    "◆ <b>QUIET MOD</b> 👁️  <code>Black Edition</code>\n"
-    f"{LINE}\n\n"
-    "Привет! Это краткий обзор того, что умеет бот.\n"
-    "Если ты здесь впервые — добро пожаловать в тишину.\n\n"
-    f"{LINE}\n"
-    "▲ <b>ПЕРЕХВАТ СООБЩЕНИЙ</b>\n\n"
-    "✕ <b>Удалённые сообщения</b>\n"
-    "   Кто-то удалил сообщение в переписке?\n"
-    "   Бот мгновенно пришлёт тебе его содержимое:\n"
-    "   текст, фото, видео, голосовое, стикер, GIF.\n\n"
-    "✦ <b>Изменённые сообщения</b>\n"
-    "   Отредактировали сообщение после отправки?\n"
-    "   Увидишь сразу — что <i>было</i> и что <i>стало</i>.\n\n"
-    "◇ <b>Умный фильтр</b>\n"
-    "   Свои удалённые и изменённые — тишина.\n"
-    "   Только чужие. Никакого лишнего шума.\n\n"
-    f"{LINE}\n"
-    "◆ <b>ИИ-КОНСЬЕРЖ</b>  <i>(без лимитов)</i>\n\n"
-    "◇ <b>Чат с ИИ прямо в боте</b>\n"
-    "   Задай любой вопрос — ИИ ответит чётко и быстро.\n"
-    "   История диалога сохраняется до сброса.\n\n"
-    "◇ <b>Анализ изображений</b>\n"
-    "   Прикрепи фото — ИИ разберёт, прочитает текст,\n"
-    "   решит задачу или объяснит что на картинке.\n\n"
-    "◇ <b>ИИ в группах и каналах</b>\n"
-    "   Добавь бота в любой чат, напиши:\n"
-    "   <code>.ai вопрос</code> — бот ответит прямо в беседе.\n\n"
-    "◇ <b>ИИ в бизнес-переписке</b>\n"
-    "   Напиши <code>.ai вопрос</code> прямо в чате с собеседником —\n"
-    "   бот незаметно заменит твоё сообщение ответом.\n\n"
-    "◇ <b>Расшифровка голосовых</b>\n"
-    "   Удалённое голосовое автоматически расшифруется\n"
-    "   в текст. Whisper AI — точность 95%+.\n\n"
-    f"{LINE}\n"
-    "▣ <b>АРХИВ СООБЩЕНИЙ</b>\n\n"
-    "◇ <b>Хранилище перехватов</b>\n"
-    "   Все перехваченные сообщения хранятся в архиве.\n"
-    "   Архив безлимитный — для всех.\n\n"
-    "◐ <b>Поиск по архиву</b>\n"
-    "   Найди любое сообщение по тексту, имени\n"
-    "   отправителя или юзернейму за секунды.\n\n"
-    "◆ <b>Сохранить навсегда</b>\n"
-    "   Одна кнопка под уведомлением — и сообщение\n"
-    "   останется у тебя навсегда вне зависимости от архива.\n\n"
-    f"{LINE}\n"
-    "⚔️ <b>МИНИ-ИГРЫ</b>\n\n"
-    "◇ <b>Камень · Ножницы · Бумага</b>\n"
-    "   <code>.knb</code> в личном чате — играй 1×1;\n"
-    "   в группе — <code>.knb @user</code> и кнопка\n"
-    "   «⚔️ Принять бой». Секретные ходы,\n"
-    "   случайный первый ход, счёт на реваншах.\n\n"
-    "💤 <b>AFK</b> — автоответ «не в сети»:\n"
-    "   <code>.afk</code> или <code>.afk заметка</code> в ЛС с ботом,\n"
-    "   выключить — кнопка «🔴 Выключить AFK».\n\n"
-    f"{LINE}\n"
-    "⟡ <b>ПОДДЕРЖКА ПРОЕКТА</b>\n\n"
-    "   Quiet Mod бесплатен и без лимитов — навсегда.\n"
-    "   Мы никого ни о чём не просим.\n\n"
-    "   Но если у тебя есть немного лишнего —\n"
-    "   вклад 15/30/50⭐ очень поможет: серверы,\n"
-    "   ИИ и новые возможности.\n\n"
-    "   В меню бота: <b>«⟡ Поддержать проект»</b>\n\n"
-    f"{LINE}\n"
-    "⚙ <b>КАК ПОДКЛЮЧИТЬ?</b>\n\n"
-    "   Нужен <b>Telegram Business</b> (или просто добавить\n"
-    "   бота в группу для ИИ-функций).\n"
-    "   В боте есть кнопка <b>«Подключение»</b> — там\n"
-    "   пошаговая инструкция с картинками.\n\n"
-    f"{LINE}\n"
-    "▲ <b>ВПЕРЕДИ — ЕЩЁ БОЛЬШЕ</b>\n\n"
-    "   Бот активно развивается. В планах:\n"
-    "   — Уведомления о скриншотах\n"
-    "   — Статистика активности чатов\n"
-    "   — Экспорт архива в файл\n"
-    "   — Ещё больше ИИ-возможностей\n\n"
-    "◇ Есть идея? Нажми кнопку <b>«✦ Предложить»</b> в боте.\n"
-    "   Лучшие идеи от вас — уже в следующем обновлении.\n\n"
-    f"{LINE}\n"
-    "Спасибо что ты здесь. Это только начало.\n"
-    "— Команда <b>Quiet Mod</b> 👁️"
-)
-
-async def _broadcast_devlog():
-    ids = await db.all_user_ids()
-    ok = 0
-    fail = 0
-    for uid in ids:
-        try:
-            await bot.send_message(uid, DEVLOG)
-            ok += 1
-            await asyncio.sleep(0.05)
-        except Exception:
-            fail += 1
-    log.info(f"📢 DevLog разослан: ok={ok} fail={fail}")
-    try:
-        await bot.send_message(ADMIN_ID, f"▤ DevLog разослан: ✔ {ok} · ✕ {fail}")
-    except Exception:
-        pass
 
 @dp.message(F.chat.type.in_({"group", "supergroup", "channel"}))
 @dp.channel_post()

@@ -16,7 +16,6 @@ GROQ_API_KEYS = [k for k in (GROQ_API_KEY, GROQ_API_KEY2) if k and k.strip()]
 BOT_USERNAME = "Quiet_Mod_Bot"
 GROQ_MODEL = "meta-llama/llama-4-maverick-17b-128e-instruct"
 GROQ_MODEL_TEXT = "llama-3.3-70b-versatile"
-BRAND_NAME = "Quiet Mod 👁️"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",

@@ -1,7 +1,7 @@
 import asyncio
 import aiosqlite
 import logging
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 DB_PATH = "data/bot.db"
@@ -75,8 +75,6 @@ async def init_db():
         username    TEXT,
         full_name   TEXT,
         referrer_id INTEGER,
-        premium_until TEXT,           -- ISO date str, NULL = нет
-        donor_badge INTEGER DEFAULT 0,-- 1 = есть значок
         joined      TEXT NOT NULL,
         ai_calls_today INTEGER DEFAULT 0,  -- зарезервировано: лимит ИИ сейчас отключён (безлимит для всех)
         ai_date     TEXT                   -- зарезервировано: дата сброса счётчика, когда лимит включат обратно
@@ -206,24 +204,6 @@ async def upsert_user(uid: int, username: str, full_name: str, referrer_id: Opti
                 full_name = excluded.full_name
         """, (uid, username, full_name, referrer_id, now))
         await db.commit()
-async def set_premium(uid: int, until: date):
-    db = _get_conn()
-    async with _write_lock:
-        await db.execute(
-            "UPDATE users SET premium_until=? WHERE id=?",
-            (until.isoformat(), uid)
-        )
-        await db.commit()
-async def set_donor_badge(uid: int):
-    db = _get_conn()
-    async with _write_lock:
-        await db.execute("UPDATE users SET donor_badge=1 WHERE id=?", (uid,))
-        await db.commit()
-async def is_premium(uid: int) -> bool:
-    user = await get_user(uid)
-    if not user or not user["premium_until"]:
-        return False
-    return date.fromisoformat(user["premium_until"]) >= date.today()
 async def count_users() -> int:
     db = _get_conn()
     async with db.execute("SELECT COUNT(*) FROM users") as cur:
@@ -244,8 +224,7 @@ async def get_all_users(limit: int = 50, offset: int = 0) -> list[dict]:
         (limit, offset)
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
-FREE_CACHE_LIMIT    = 100_000  # лимиты архива убраны — практически безлимит для всех
-PREMIUM_CACHE_LIMIT = 100_000  # (премиум-подписки больше нет)
+FREE_CACHE_LIMIT = 100_000  # лимиты архива убраны — практически безлимит для всех
 
 async def _get_owner_limit(owner_id: int) -> int:
     now = asyncio.get_running_loop().time()

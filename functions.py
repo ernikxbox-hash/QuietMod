@@ -1,28 +1,14 @@
 import asyncio
-import logging
-import os
 import re
-import signal
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 import aiohttp
 from ddgs import DDGS
-from aiogram import Bot, Dispatcher, F
-from aiogram.client.default import DefaultBotProperties
-from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramRetryAfter
-from aiogram.filters import Command, CommandStart, StateFilter
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import Bot
 from aiogram.types import (
-    BusinessMessagesDeleted,
-    CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    LabeledPrice,
     Message,
-    PreCheckoutQuery,
 )
 from html import escape as html_escape
 import database as db
@@ -30,11 +16,9 @@ from core import (
     ADMIN_ID,
     BOT_TOKEN,
     BOT_USERNAME,
-    BRAND_NAME,
     GROQ_API_KEYS,
     GROQ_MODEL,
     GROQ_MODEL_TEXT,
-    S,
     bot,
     get_http,
     log,
@@ -52,8 +36,6 @@ user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner
 knb_games: dict[tuple, dict] = {}  # ("dm"|"bg", conn_id, chat_id) или ("group", chat_id) -> состояние игры .knb
 business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
-chat_msg_ids: dict[int, list[int]] = {}  # chat_id -> [msg_id, ...]
-MAX_MSG_CACHE = 200
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
 PROFANITY_RE = re.compile(
     r"(?iu)\b("
@@ -106,12 +88,6 @@ _WBL_FLOOD_PUNCT_RE = re.compile(r"(?u)[!?.,:;()\[\]{}<>\-_=+*/\\]{25,}")
 last_notify_msg: dict[int, int] = {}
 home_msg: dict[int, int] = {}
 
-class S(StatesGroup):
-    ai_chat      = State()
-    ai_search    = State()
-    suggest_idea = State()
-    broadcast    = State()
-    broadcast_groups = State()
 LINE = "──────────────────"
 MSK = timezone(timedelta(hours=3))
 
@@ -119,17 +95,6 @@ def fmt_msg_date(dt) -> str:
     return dt.astimezone(MSK).strftime("%d.%m.%Y · %H:%M")
 def ref_link(uid: int) -> str:
     return f"https://t.me/{BOT_USERNAME}?start=ref_{uid}"
-def _fmt_duration_ru(seconds: int) -> str:
-    if seconds < 60:
-        return f"{seconds} сек."
-    minutes = seconds // 60
-    if minutes < 60:
-        return f"{minutes} мин."
-    hours = minutes // 60
-    if hours < 24:
-        return f"{hours} ч."
-    days = hours // 24
-    return f"{days} дн."
 def _wbl_normalize_text(text: str) -> str:
     t = (text or "").lower().translate(_WBL_TRANSLATE)
     t = _WBL_SEP_RE.sub(" ", t)
