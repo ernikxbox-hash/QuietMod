@@ -880,45 +880,45 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
     for i in range(n):
         idx = (start + i) % n
         api_key = keys[idx]
-    try:
-        session = get_http()
-        async with session.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=45),
-        ) as resp:
-            import json as _json
-            raw = await resp.text()
-            try:
-                data = _json.loads(raw)
-                    except Exception:
-                        log.error(
-                            f"Groq non-JSON response (key={idx + 1}/{n}, model={model}, "
-                            f"status={resp.status}, body={raw[:300]})",
-                            exc_info=True,
-                        )
-                        continue
-                    if resp.status != 200:
-                        err = data.get("error") if isinstance(data, dict) else data
-                        log.warning(
-                            f"Groq key {idx + 1}/{n} failed (model={model}, status={resp.status}): "
-                            f"{_json.dumps(err, ensure_ascii=False)[:200]} — пробую следующий ключ"
-                        )
-                        await db.record_stat(f"groq_key{idx + 1}_fail", f"status={resp.status}")
-                        continue
-                    if "choices" not in data:
-                        log.error(
-                            f"Groq unexpected response (key={idx + 1}/{n}, model={model}, "
-                            f"status={resp.status}, body={_json.dumps(data, ensure_ascii=False)[:300]})"
-                        )
-                        continue
-                    _GROQ_KEY_INDEX = idx
-                    await db.record_stat(f"groq_key{idx + 1}_ok", model)
-                    return data["choices"][0]["message"]["content"].strip()
+        try:
+            session = get_http()
+            async with session.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=45),
+            ) as resp:
+                import json as _json
+                raw = await resp.text()
+                try:
+                    data = _json.loads(raw)
+                except Exception:
+                    log.error(
+                        f"Groq non-JSON response (key={idx + 1}/{n}, model={model}, "
+                        f"status={resp.status}, body={raw[:300]})",
+                        exc_info=True,
+                    )
+                    continue
+                if resp.status != 200:
+                    err = data.get("error") if isinstance(data, dict) else data
+                    log.warning(
+                        f"Groq key {idx + 1}/{n} failed (model={model}, status={resp.status}): "
+                        f"{_json.dumps(err, ensure_ascii=False)[:200]} — пробую следующий ключ"
+                    )
+                    await db.record_stat(f"groq_key{idx + 1}_fail", f"status={resp.status}")
+                    continue
+                if "choices" not in data:
+                    log.error(
+                        f"Groq unexpected response (key={idx + 1}/{n}, model={model}, "
+                        f"status={resp.status}, body={_json.dumps(data, ensure_ascii=False)[:300]})"
+                    )
+                    continue
+                _GROQ_KEY_INDEX = idx
+                await db.record_stat(f"groq_key{idx + 1}_ok", model)
+                return data["choices"][0]["message"]["content"].strip()
         except asyncio.TimeoutError:
             log.warning(f"Groq request timeout (key={idx + 1}/{n}, model={model}) — пробую следующий ключ")
             await db.record_stat(f"groq_key{idx + 1}_fail", "timeout")

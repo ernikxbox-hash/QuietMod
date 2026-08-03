@@ -1682,13 +1682,13 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
                     data=form,
                     timeout=aiohttp.ClientTimeout(total=30),
                 ) as resp:
-                        if resp.status == 200:
-                            await db.record_stat("whisper_ok")
-                            return (await resp.text()).strip()
-                        _whisper_err = (await resp.text())[:300]
-                        log.warning(
-                            f"Whisper key failed (status={resp.status}, body={_whisper_err}) — пробую следующий ключ"
-                        )
+                    if resp.status == 200:
+                        await db.record_stat("whisper_ok")
+                        return (await resp.text()).strip()
+                    _whisper_err = (await resp.text())[:300]
+                    log.warning(
+                        f"Whisper key failed (status={resp.status}, body={_whisper_err}) — пробую следующий ключ"
+                    )
             except Exception as e:
                 log.warning(f"Whisper transcribe (key attempt): {e}")
         await db.record_stat("whisper_fail")
