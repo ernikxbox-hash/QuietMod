@@ -545,6 +545,7 @@ SYSTEM_PROMPT = (
     "— Пиши обычным текстом. Для выделения используй ТОЛЬКО Telegram HTML-теги: <b>жирный</b>, <i>курсив</i>.\n"
     "— Математические формулы пиши в читаемом виде, например: sqrt(x^2 + 4) + sqrt(x^2 + 1) = 3 - 5x^2\n"
     "— Списки оформляй через дефис или цифру с точкой, без Markdown-маркеров.\n"
+    "— Если тебе дали результаты поиска, а они противоречат твоим знаниям — ВСЕГДА доверяй поиску: твои знания могли устареть (например, человек мог недавно умереть, курс измениться, выйти новая версия). Не спорь с поиском и не отвечай по памяти, если есть свежие данные.\n"
     "— Никаких LaTeX, никаких $...$ или $$...$$.\n\n"
     "КОД — ОТДЕЛЬНОЕ ПРАВИЛО:\n"
     "— Если тебя просят написать код (любой фрагмент от одной строки), "
@@ -893,6 +894,55 @@ def _needs_search_preemptive(user_msg: str) -> bool:
     ):
         return True
     return False
+
+# ─── Запросы о смерти/здоровье: не даём боту «лгать» по устаревшим знаниям ──
+_DEATH_RE = re.compile(
+    r"(?iu)\b(жив ли|жива ли|живы ли|жив ли он|жива ли она|"
+    r"умер\b|умерла\b|умерли\b|умерших\b|умершего\b|скончался\b|скончалась\b|скончались\b|"
+    r"погиб\b|погибла\b|погибли\b|не стало\b|дата смерти\b|в живых\b|"
+    r"мертв\b|мертва\b|убит\b|убита\b|убитый\b|смерть\b)"
+)
+
+_DEATH_STOPWORDS = {
+    "когда", "где", "как", "почему", "кто", "что", "он", "она", "они",
+    "его", "её", "их", "этот", "эта", "это", "такое", "такой", "такая",
+    "ещё", "сейчас", "мне", "в", "на", "по", "ли", "был", "была", "были",
+    "про", "о", "значит", "означает", "вообще", "даже",
+}
+
+def _is_death_query(text: str) -> bool:
+    return bool(_DEATH_RE.search(text or ""))
+
+def _extract_death_subject(text: str) -> str:
+    """Вытаскивает имя/субъект из запроса о смерти («жив ли Иван» -> «иван»)."""
+    t = (text or "").lower()
+    _DEATH_KWS = (
+        "жив ли ещё", "жив ли", "жива ли", "живы ли", "умер ли", "умерла ли",
+        "когда умер", "когда умерла", "умерших", "умершего", "умерший",
+        "умер", "умерла", "умерли", "скончался", "скончалась", "скончались",
+        "погиб", "погибла", "погибли", "в живых", "дата смерти", "смерть",
+        "не стало", "мертв", "мертва", "убит", "убита", "убитый",
+        "что случилось с", "что стало с",
+    )
+    # длинные формы раньше коротких: «умерла» до «умер», «погибла» до «погиб» и т.д.
+    for kw in sorted(_DEATH_KWS, key=len, reverse=True):
+        t = t.replace(kw, " ")
+    t = re.sub(r"[?!.,:;«»\"'()]+", " ", t)
+    words = [
+        w for w in t.split()
+        if len(w) > 1 and w not in _DEATH_STOPWORDS and not w.startswith(("@", "http"))
+    ]
+    return " ".join(words).strip() or text
+
+_ALIVE_RE = re.compile(
+    r"(?iu)\b(он жив|она жива|они живы|жив и здоров|жива и здорова|"
+    r"alive|живой|живая|живые|жива|жив)\b"
+)
+
+def _reply_claims_alive(text: str) -> bool:
+    """Ответ ИИ утверждает, что человек жив (нужна перепроверка)."""
+    return bool(_ALIVE_RE.search(text or ""))
+
 def _sanitize_text_messages(messages: list) -> list:
     """Гарантирует формат для ТЕКСТОВОЙ модели Groq: content всегда строка.
 
@@ -1125,22 +1175,36 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
             ai_history[uid].append({"role": "assistant", "content": currency_text})
             return currency_text
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
-    if not image_base64 and _needs_search_preemptive(user_msg):
+    today_str = date.today().strftime("%d.%m.%Y")
+    is_death = not image_base64 and _is_death_query(user_msg)
+    search_query = user_msg
+    if not image_base64 and (is_death or _needs_search_preemptive(user_msg)):
         log.info(f"🔍 Preemptive search for uid={uid}: {user_msg[:60]}")
-        search_results = await _ddg_search(user_msg)
+        if is_death:
+            subject = _extract_death_subject(user_msg)
+            search_query = f"{subject} умер" if subject and subject != user_msg else user_msg
+        search_results = await _ddg_search(search_query)
         if search_results:
-            messages = messages + [
-                {
-                    "role": "user",
-                    "content": (
-                        f"[Результаты поиска по запросу «{user_msg}»]\n\n"
-                        f"{search_results}\n\n"
-                        "Используй эти данные, если они релевантны вопросу — "
-                        "дай актуальный и точный ответ. Отвечай на языке "
-                        "пользователя, кратко и по делу."
-                    )
-                }
-            ]
+            if is_death:
+                search_instr = (
+                    f"[Результаты поиска по запросу «{search_query}»]\n\n"
+                    f"{search_results}\n\n"
+                    f"Сегодня: {today_str}. Пользователь спрашивает про человека, который "
+                    "мог недавно умереть. Данные поиска НОВЕЕ твоих знаний: если в "
+                    "результатах есть информация о смерти (дата, обстоятельства) — "
+                    "ТЫ ОБЯЗАН сообщить её, даже если это противоречит тому, что ты "
+                    "знал раньше. Ответь чётко: жив или умер (с датой), на языке "
+                    "пользователя, кратко."
+                )
+            else:
+                search_instr = (
+                    f"[Результаты поиска по запросу «{user_msg}»]\n\n"
+                    f"{search_results}\n\n"
+                    f"Сегодня: {today_str}. Используй эти данные, если они релевантны "
+                    "вопросу — дай актуальный и точный ответ. Отвечай на языке "
+                    "пользователя, кратко и по делу."
+                )
+            messages = messages + [{"role": "user", "content": search_instr}]
             already_searched = True
     reply = await _groq_request(messages, model=active_model)
     if reply is None:
@@ -1155,14 +1219,14 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
         reply += "\n\n◐ <i>ответ дополнен поиском</i>"
     if not image_base64 and not already_searched and _needs_search(reply, user_msg):
         log.info(f"🔍 Fallback search triggered for uid={uid}: {user_msg[:60]}")
-        search_results = await _ddg_search(user_msg)
+        search_results = await _ddg_search(search_query)
         if search_results:
             augmented_messages = messages + [
                 {"role": "assistant", "content": reply},
                 {
                     "role": "user",
                     "content": (
-                        f"[Результаты поиска по запросу «{user_msg}»]\n\n"
+                        f"[Результаты поиска по запросу «{search_query}»]\n\n"
                         f"{search_results}\n\n"
                         "На основе этих данных дай актуальный и точный ответ. "
                         "Если информация из поиска полезна — используй её. "
@@ -1174,5 +1238,29 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
             if reply_with_search:
                 reply = _normalize_code_blocks(reply_with_search) + "\n\n◐ <i>ответ дополнен поиском</i>"
                 log.info(f"🔍 Search augmented reply for uid={uid}")
+    if is_death and _reply_claims_alive(reply):
+        log.info(f"⚰️ Death-check verify uid={uid}: {user_msg[:60]}")
+        subject = _extract_death_subject(user_msg)
+        vq = f"{subject} умер" if subject and subject != user_msg else f"{user_msg} дата смерти"
+        v_results = await _ddg_search(vq)
+        if v_results:
+            v_messages = messages + [
+                {"role": "assistant", "content": reply},
+                {
+                    "role": "user",
+                    "content": (
+                        f"[Новые результаты поиска: «{vq}»]\n\n"
+                        f"{v_results}\n\n"
+                        f"Сегодня: {today_str}. Важно: ранее ты ответил, что человек жив. "
+                        "Перепроверь по этим данным. Если они сообщают о смерти — "
+                        "исправь ответ и укажи дату. Данные поиска НОВЕЕ твоих знаний: "
+                        "доверяй им. Ответь кратко, на языке пользователя."
+                    )
+                },
+            ]
+            v_reply = await _groq_request(v_messages, model=active_model)
+            if v_reply:
+                reply = _normalize_code_blocks(v_reply) + "\n\n◐ <i>перепроверено по свежим данным</i>"
+                log.info(f"⚰️ Death-check corrected uid={uid}")
     ai_history[uid].append({"role": "assistant", "content": reply})
     return reply
