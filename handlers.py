@@ -44,14 +44,8 @@ from functions import (
     _business_edit_ai_html,
     _contains_profanity,
     _wbl_should_delete,
-    _ddg_search,
     _edit_ai_html,
-    _extract_city,
     _get_image_base64,
-    _get_weather,
-    _groq_request,
-    _is_weather_query,
-    _normalize_code_blocks,
     _price_estimate,
     _reply_ai_html,
     _send_notify,
@@ -755,107 +749,6 @@ async def on_ai_group(msg: Message):
         except Exception as e:
             log.error(f"ai_group reply: {e}")
     log.info(f"🤖 .ai group chat={msg.chat.id} user={uid}")
-@dp.business_message(F.text.regexp(r"(?i)^\.search\s+.+"))
-async def on_search_inline(msg: Message):
-    if not msg.business_connection_id:
-        return
-    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".search")
-    if owner_id is None:
-        return
-    if not msg.from_user or msg.from_user.id != owner_id:
-        return
-    raw_text = msg.text or ""
-    query = raw_text[raw_text.index(" ") + 1:].strip() if " " in raw_text else ""
-    if not query:
-        return
-    ok = await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◐ ·")
-    if not ok:
-        return
-    await asyncio.sleep(1)
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◐ · ·")
-    await asyncio.sleep(1)
-    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◐ · · ·")
-    await asyncio.sleep(1)
-    if _is_weather_query(query):
-        city = _extract_city(query)
-        weather_text = await _get_weather(city) if city else None
-        if weather_text:
-            answer = weather_text
-        elif city:
-            answer = f"⚠️ Не нашёл город «{city}» — проверь название и попробуй ещё раз."
-        else:
-            answer = "🌤 Уточни город, например: .search погода в Москве"
-    else:
-        search_results = await _ddg_search(query)
-        if search_results:
-            prompt = (
-                f"Пользователь ищет: «{query}»\n\n"
-                f"Результаты поиска:\n{search_results}\n\n"
-                "Дай чёткий и актуальный ответ на основе этих данных. Кратко, по делу."
-            )
-        else:
-            prompt = f"Найди и расскажи всё что знаешь про: {query}"
-        answer = await _groq_request([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ], model=GROQ_MODEL_TEXT)
-        if not answer:
-            answer = "⚠️ Не удалось получить результаты поиска — попробуй позже."
-        else:
-            answer = _normalize_code_blocks(answer)
-    await _business_edit_ai_html(
-        msg.business_connection_id, msg.chat.id, msg.message_id,
-        prefix="◐ ", answer=f"{answer}\n\n— 👁️ @{BOT_USERNAME}"
-    )
-    log.info(f"🔍 .search done owner={owner_id} query={query[:50]}")
-@dp.message(F.text.regexp(r"(?i)^\.search\s+.+"), F.chat.type.in_({"group", "supergroup", "channel"}))
-async def on_search_group(msg: Message):
-    if not msg.from_user:
-        return
-    uid = msg.from_user.id
-    raw_text = msg.text or ""
-    query = raw_text[raw_text.index(" ") + 1:].strip() if " " in raw_text else ""
-    if not query:
-        return
-    await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
-    await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
-    thinking = await msg.reply("◐ · · ·")
-    if _is_weather_query(query):
-        city = _extract_city(query)
-        weather_text = await _get_weather(city) if city else None
-        if weather_text:
-            answer = weather_text
-        elif city:
-            answer = f"⚠️ Не нашёл город «{city}» — проверь название и попробуй ещё раз."
-        else:
-            answer = "🌤 Уточни город, например: .search погода в Москве"
-    else:
-        search_results = await _ddg_search(query)
-        if search_results:
-            prompt = (
-                f"Пользователь ищет: «{query}»\n\n"
-                f"Результаты поиска:\n{search_results}\n\n"
-                "Дай чёткий и актуальный ответ на основе этих данных. Кратко, по делу."
-            )
-        else:
-            prompt = f"Найди и расскажи всё что знаешь про: {query}"
-        answer = await _groq_request([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ], model=GROQ_MODEL_TEXT)
-        if not answer:
-            answer = "⚠️ Не удалось получить результаты поиска — попробуй позже."
-        else:
-            answer = _normalize_code_blocks(answer)
-    try:
-        await _edit_ai_html(thinking, prefix="◐ ", answer=answer)
-    except Exception:
-        try:
-            await thinking.delete()
-            await _reply_ai_html(msg, prefix="◐ ", answer=answer, use_reply=True)
-        except Exception as e:
-            log.error(f"search_group reply: {e}")
-    log.info(f"🔍 .search group chat={msg.chat.id} user={uid} query={query[:50]}")
 @dp.business_message(F.text.regexp(r"(?i)^\.price(\s+.+)?$"))
 async def on_price_inline(msg: Message):
     if not msg.business_connection_id:
@@ -1442,7 +1335,7 @@ async def cb_knb_cancel(call: CallbackQuery):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:

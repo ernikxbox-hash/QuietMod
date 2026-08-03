@@ -401,17 +401,10 @@ def kb_donate() -> InlineKeyboardMarkup:
 CMD_FEATURES: dict[str, dict] = {
     "ai": {
         "title": "◇ .ai",
-        "desc": "Задай вопрос — ИИ ответит. Работает с текстом и фото.",
+        "desc": "Задай вопрос — ИИ ответит. Встроенный поиск: курс валют и крипты, погода, новости, веб.",
         "usage": ".ai твой вопрос",
-        "example": ".ai объясни теорию относительности",
+        "example": ".ai курс доллара · .ai погода в Москве · .ai объясни теорию относительности",
         "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах."
-    },
-    "search": {
-        "title": "◇ .search",
-        "desc": "Поиск в интернете через DuckDuckGo + ИИ.",
-        "usage": ".search запрос",
-        "example": ".search курс доллара сегодня",
-        "note": "Погода: .search погода в Лондоне"
     },
     "spam": {
         "title": "◇ .spam",
@@ -521,7 +514,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "knb",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
@@ -744,6 +737,119 @@ async def _get_weather(city: str) -> Optional[str]:
         return result
     except Exception as e:
         log.warning(f"Open-Meteo weather error: {e}")
+        return None
+
+# ─── Точный курс валют и крипты (встроен в .ai) ────────────────────────
+_CURRENCY_CODES: dict[str, str] = {}   # алиас (нижний регистр) -> код валюты
+_CURRENCY_NAMES: dict[str, str] = {}   # код -> человеческое название
+
+def _register_cur(code: str, name: str, *aliases: str) -> None:
+    _CURRENCY_NAMES[code] = name
+    for a in aliases:
+        _CURRENCY_CODES[a] = code
+
+_register_cur("BTC", "биткоин", "биткоин", "bitcoin", "btc")
+_register_cur("ETH", "эфир", "эфир", "эфириум", "ethereum", "eth")
+_register_cur("USD", "доллар США", "доллар", "долар", "usd")
+_register_cur("EUR", "евро", "евро", "eur")
+_register_cur("RUB", "рубль", "рубл", "rub", "₽")
+_register_cur("GBP", "фунт стерлингов", "фунт", "gbp")
+_register_cur("CNY", "юань", "юан", "cny")
+_register_cur("JPY", "японская йена", "йен", "иен", "jpy")
+_register_cur("KZT", "тенге", "тенге", "kzt")
+_register_cur("UAH", "гривна", "гривн", "uah")
+_register_cur("TRY", "турецкая лира", "лир", "try")
+_register_cur("CHF", "швейцарский франк", "франк", "chf")
+
+def _currency_codes_in(text: str) -> list[str]:
+    """Коды валют в порядке их появления в тексте (для выбора base/target)."""
+    t = text.lower()
+    found = [(t.find(alias), alias) for alias in _CURRENCY_CODES if t.find(alias) != -1]
+    found.sort()
+    codes: list[str] = []
+    for _, alias in found:
+        code = _CURRENCY_CODES[alias]
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+def _is_currency_query(text: str) -> bool:
+    codes = _currency_codes_in(text)
+    if not codes:
+        return False
+    return not (len(codes) == 1 and codes[0] == "RUB")
+
+def _fmt_rate(value: float) -> str:
+    if value >= 100:
+        return f"{value:,.0f}".replace(",", " ")
+    if value >= 1:
+        return f"{value:.2f}"
+    return f"{value:.4f}"
+
+async def _get_crypto_rate(session: aiohttp.ClientSession, crypto: list[str]) -> Optional[str]:
+    ids = {"BTC": "bitcoin", "ETH": "ethereum"}
+    id_str = ",".join(ids[c] for c in crypto if c in ids)
+    if not id_str:
+        return None
+    async with session.get(
+        "https://api.coingecko.com/api/v3/simple/price",
+        params={"ids": id_str, "vs_currencies": "usd,rub"},
+        timeout=aiohttp.ClientTimeout(total=10),
+    ) as resp:
+        if resp.status != 200:
+            return None
+        data = await resp.json()
+    lines = []
+    for c in crypto:
+        item = (data.get(ids.get(c)) or {})
+        usd = item.get("usd")
+        rub = item.get("rub")
+        if usd is None:
+            continue
+        name = _CURRENCY_NAMES.get(c, c)
+        line = f"🪙 <b>{name}</b>: <b>${_fmt_rate(float(usd))}</b>"
+        if rub is not None:
+            line += f" · ₽{_fmt_rate(float(rub))}"
+        lines.append(line)
+    if not lines:
+        return None
+    return "\n".join(lines) + "\n\n◐ <i>актуальный курс крипты</i>"
+
+async def _get_currency_rate(query: str) -> Optional[str]:
+    codes = _currency_codes_in(query)
+    if not codes or (len(codes) == 1 and codes[0] == "RUB"):
+        return None
+    try:
+        session = get_http()
+        crypto = [c for c in codes if c in ("BTC", "ETH")]
+        fiat = [c for c in codes if c not in ("BTC", "ETH")]
+        if crypto:
+            return await _get_crypto_rate(session, crypto)
+        if not fiat:
+            return None
+        base = next((c for c in fiat if c != "RUB"), fiat[0])
+        target = next((c for c in fiat if c != base), "RUB")
+        if base == target:
+            return None
+        async with session.get(
+            f"https://open.er-api.com/v6/latest/{base}",
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                return None
+            data = await resp.json()
+        rate = (data.get("rates") or {}).get(target)
+        if rate is None:
+            return None
+        base_name = _CURRENCY_NAMES.get(base, base)
+        target_name = _CURRENCY_NAMES.get(target, target)
+        return (
+            f"💱 <b>{base_name} → {target_name}</b>\n"
+            f"1 {base} = <b>{_fmt_rate(float(rate))} {target}</b>\n\n"
+            f"◐ <i>актуальный курс</i>"
+        )
+    except Exception as e:
+        log.warning(f"Currency API error: {e}")
         return None
 SEARCH_TRIGGERS = [
     "курс", "цена", "цены", "стоимость", "сколько стоит", "подорожал",
@@ -1012,6 +1118,12 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
             reply = f"⚠️ Не нашёл город «{city}» — уточни название и спроси ещё раз."
             ai_history[uid].append({"role": "assistant", "content": reply})
             return reply
+    if not image_base64 and _is_currency_query(user_msg):
+        currency_text = await _get_currency_rate(user_msg)
+        if currency_text:
+            log.info(f"💱 Currency rate for uid={uid}: {user_msg[:60]}")
+            ai_history[uid].append({"role": "assistant", "content": currency_text})
+            return currency_text
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     if not image_base64 and _needs_search_preemptive(user_msg):
         log.info(f"🔍 Preemptive search for uid={uid}: {user_msg[:60]}")
