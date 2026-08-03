@@ -44,6 +44,7 @@ ai_history: dict[int, list] = {}
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
 business_muted_chats: set[tuple[str, int]] = set()
+business_nomute_chats: set[tuple[str, int]] = set()
 business_afk: dict[str, dict] = {}
 business_afk_last_reply: dict[tuple[str, int], float] = {}
 user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner_id, started_at, note}
@@ -422,6 +423,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".unmute — выключить",
         "note": "Только для личных чатов (Business)"
     },
+    "nomute": {
+        "title": "🛡 .nomute",
+        "desc": "Дублирует твои сообщения от имени бота — если собеседник удаляет их, копия останется.",
+        "usage": ".nomute — включить",
+        "example": ".unnomute — выключить",
+        "note": "Только для личных чатов (Business)"
+    },
     "afk": {
         "title": "◇ .afk",
         "desc": "Автоответчик: «я не в сети».",
@@ -509,7 +517,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "search", "spam", "mute", "afk", "code", "wbl", "price", "knb",
+    cmd_keys = ["ai", "search", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):

@@ -316,6 +316,75 @@ async def cb_unmute_btn(call: CallbackQuery):
         ),
         reply_markup={"inline_keyboard": []},
     )
+@dp.business_message(F.text.regexp(r"(?i)^\.nomute$"))
+async def on_nomute_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".nomute")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_nomute_chats.add((msg.business_connection_id, msg.chat.id))
+    nomute_kb = {"inline_keyboard": [[{"text": "🔴 Выключить nomute", "callback_data": "unnomute_btn"}]]}
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "🛡️ <b>NOMUTE ВКЛЮЧЁН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Твои сообщения дублируются ботом\n"
+            "◇ Если собеседник удаляет их — копия от бота останется\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Выключить: кнопка ниже 👇\n"
+            "   или команда <code>.unnomute</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup=nomute_kb,
+    )
+@dp.business_message(F.text.regexp(r"(?i)^\.unnomute$"))
+async def on_unnomute_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".unnomute")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    business_nomute_chats.discard((msg.business_connection_id, msg.chat.id))
+    await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Nomute выключен")
+@dp.callback_query(F.data == "unnomute_btn")
+async def cb_unnomute_btn(call: CallbackQuery):
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось выключить nomute", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "unnomute_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может выключить nomute", show_alert=True)
+        return
+    chat_id = call.message.chat.id
+    key = (conn_id, chat_id)
+    if key not in business_nomute_chats:
+        await call.answer("◇ Nomute уже выключен", show_alert=False)
+    else:
+        business_nomute_chats.discard(key)
+        await call.answer("✅ Nomute выключен", show_alert=False)
+    await _business_edit_message(
+        conn_id, chat_id, call.message.message_id,
+        (
+            "🛡️ <b>NOMUTE ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Дублирование сообщений <b>выключено</b>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
 @dp.business_message(F.text.regexp(r"(?i)^\.afk(\s+.*)?$"))
 async def on_afk_inline(msg: Message):
     if not msg.business_connection_id:
@@ -1349,7 +1418,7 @@ async def cb_knb_cancel(call: CallbackQuery):
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".search ", ".spam ", ".price", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
@@ -1366,6 +1435,19 @@ async def on_business_msg(msg: Message):
         code_text = f"<pre><code>{html_escape(msg.text)}</code></pre>"
         await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, code_text)
         return
+    if (
+        msg.text
+        and msg.from_user
+        and msg.from_user.id == owner_id
+        and getattr(msg.chat, "type", None) == "private"
+        and (msg.business_connection_id, msg.chat.id) in business_nomute_chats
+        and not msg.text.startswith(".")
+    ):
+        ok, retry_after, _ = await _business_send_message_ex(msg.business_connection_id, msg.chat.id, msg.text)
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            await _business_send_message_ex(msg.business_connection_id, msg.chat.id, msg.text)
+        log.info(f"🛡️ nomute resend conn={msg.business_connection_id} chat={msg.chat.id} owner={owner_id}")
     if (
         getattr(msg.chat, "type", None) == "private"
         and msg.from_user
