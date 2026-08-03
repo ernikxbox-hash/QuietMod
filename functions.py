@@ -6,6 +6,7 @@ import aiohttp
 from ddgs import DDGS
 from aiogram import Bot
 from aiogram.types import (
+    BufferedInputFile,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
@@ -366,9 +367,9 @@ def kb_donate() -> InlineKeyboardMarkup:
 CMD_FEATURES: dict[str, dict] = {
     "ai": {
         "title": "◇ .ai",
-        "desc": "Задай вопрос — ИИ ответит. Встроенный поиск: курс валют и крипты, погода, новости, веб.",
-        "usage": ".ai твой вопрос",
-        "example": ".ai курс доллара · .ai погода в Москве · .ai объясни теорию относительности",
+        "desc": "Задай вопрос — ИИ ответит. Встроенный поиск: курс валют и крипты, погода, новости, веб. Может присылать готовые файлы: код, скрипты, сайты.",
+        "usage": ".ai твой вопрос · .ai сделай файл",
+        "example": ".ai курс доллара · .ai погода в Москве · .ai сделай калькулятор на python",
         "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах."
     },
     "spam": {
@@ -528,7 +529,15 @@ SYSTEM_PROMPT = (
     "— Короткое имя переменной, команду или путь к файлу внутри обычного текста "
     "оформляй одиночным <code>тегом</code> — не <pre>.\n"
     "— Не смешивай <b> или <i> внутри <pre><code>...</code></pre> — блок кода "
-    "должен быть только с <pre><code> и ничем больше."
+    "должен быть только с <pre><code> и ничем больше.\n\n"
+    "ФАЙЛЫ — ОТДЕЛЬНОЕ ПРАВИЛО:\n"
+    "— Если пользователь просит создать файл, скрипт, программу или код «файлом» — "
+    "оборачивай каждый файл в маркер: <FILE name=\"calculator.py\">код</FILE>.\n"
+    "— Файлов может быть НЕСКОЛЬКО подряд (например, проект: main.py, settings.py, README.md) — "
+    "каждый файл в своём маркере.\n"
+    "— Внутри маркера пиши код как есть: без ``` и без HTML-тегов.\n"
+    "— Вне маркеров кратко опиши, что делает файл(ы) и как его запустить.\n"
+    "— Не используй маркеры, если пользователь не просил файл — просто отвечай как обычно."
 )
 
 async def _get_image_base64(bot: Bot, file_id: str) -> Optional[str]:
@@ -1242,10 +1251,72 @@ async def _business_edit_ai_html(conn_id: str, chat_id: int, msg_id: int, prefix
         fallback = f"{prefix}{html_escape(answer)}"
         ok, _ = await _business_edit_message_ex(conn_id, chat_id, msg_id, fallback)
     return ok
-async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None) -> str:
+
+
+# ─── Файлы от ИИ: <FILE name="...">код</FILE> → настоящие документы ─────
+_FILE_RE = re.compile(
+    r"<FILE\s+name\s*=\s*[\"']([^\"']+)[\"']\s*>(.*?)</FILE>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+def _safe_filename(name: str) -> str:
+    """Приводит имя файла к безопасному виду: без путей, без лишних символов, с расширением."""
+    name = (name or "").strip().replace("\\", "/").split("/")[-1].strip()
+    name = re.sub(r"[^\w.\-]+", "_", name)
+    if not name or name in (".", ".."):
+        return "file.txt"
+    if "." not in name:
+        name += ".txt"
+    if len(name) > 64:
+        ext = name.rsplit(".", 1)[-1]
+        name = name[:60] + "." + ext
+    return name
+
+_FILE_TRIGGERS = ("файл", "скрипт", "программ", "сделай код", "напиши код", "сгенерируй код", "мини-игр", "игру на")
+
+def _wants_file(text: str) -> bool:
+    """Пользователь просит создать файл/код файлом — даём модели больше токенов."""
+    t = (text or "").lower()
+    return any(k in t for k in _FILE_TRIGGERS)
+
+def _parse_code_files(text: str) -> tuple[str, list[dict]]:
+    """Извлекает <FILE name="...">код</FILE>-блоки из ответа ИИ.
+
+    Возвращает (текст без маркеров, [{"name": ..., "content": ...}]).
+    """
+    text = text or ""
+    files: list[dict] = []
+    def _extract(match: re.Match) -> str:
+        content = (match.group(2) or "").strip("\r\n \t")
+        content = re.sub(r"^```(?:\w+)?\s*|\s*```$", "", content).strip("\r\n \t")
+        if content:
+            files.append({"name": _safe_filename(match.group(1)), "content": content})
+        return ""
+    cleaned = _FILE_RE.sub(_extract, text)
+    cleaned = re.sub(r"<FILE\b[^>]*>|</FILE>", "", cleaned, flags=re.IGNORECASE)
+    return cleaned, files
+
+async def _send_code_files(chat_id: int, files: list[dict], business_connection_id: Optional[str] = None) -> None:
+    """Отправляет готовые файлы (код) как документы в чат."""
+    for f in files:
+        name = f.get("name") or "file.txt"
+        content = (f.get("content") or "").strip()
+        if not content:
+            continue
+        try:
+            await bot.send_document(
+                chat_id,
+                document=BufferedInputFile(content.encode("utf-8"), filename=name),
+                business_connection_id=business_connection_id,
+            )
+            log.info(f"📄 Файл отправлен: {name} → chat={chat_id}")
+        except Exception as e:
+            log.warning(f"send document {name}: {e}")
+
+async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None) -> tuple[str, list[dict]]:
     egg = _check_easter_egg(user_msg)
     if egg:
-        return egg
+        return egg, []
     history = ai_history.setdefault(uid, [])
     if image_base64:
         content = [
@@ -1272,17 +1343,17 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
         if weather_text:
             reply = weather_text + "\n\n◐ <i>точные данные о погоде</i>"
             ai_history[uid].append({"role": "assistant", "content": reply})
-            return reply
+            return reply, []
         if city:
             reply = f"⚠️ Не нашёл город «{city}» — уточни название и спроси ещё раз."
             ai_history[uid].append({"role": "assistant", "content": reply})
-            return reply
+            return reply, []
     if not image_base64 and _is_currency_query(user_msg):
         currency_text = await _get_currency_rate(user_msg)
         if currency_text:
             log.info(f"💱 Currency rate for uid={uid}: {user_msg[:60]}")
             ai_history[uid].append({"role": "assistant", "content": currency_text})
-            return currency_text
+            return currency_text, []
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     today_str = date.today().strftime("%d.%m.%Y")
     is_death = not image_base64 and _is_death_query(user_msg)
@@ -1315,14 +1386,17 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                 )
             messages = messages + [{"role": "user", "content": search_instr}]
             already_searched = True
-    reply = await _groq_request(messages, model=active_model)
+    max_tokens = 8192 if _wants_file(user_msg) else 2048
+    reply = await _groq_request(messages, max_tokens=max_tokens, model=active_model)
     if reply is None:
         return (
             "◆ <b>ИИ недоступен</b> — вероятно, исчерпан бесплатный лимит токенов на сегодня.\n\n"
             "◇ Подожди немного и попробуй ещё раз.\n\n"
             "Quiet Mod — бесплатный бот для всех.\n"
-            "Спасибо за терпение и уважение ◆"
+            "Спасибо за терпение и уважение ◆",
+            [],
         )
+    reply, files = _parse_code_files(reply)
     reply = _normalize_code_blocks(reply)
     if already_searched:
         reply += "\n\n◐ <i>ответ дополнен поиском</i>"
@@ -1343,8 +1417,10 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                     )
                 }
             ]
-            reply_with_search = await _groq_request(augmented_messages, model=active_model)
+            reply_with_search = await _groq_request(augmented_messages, max_tokens=max_tokens, model=active_model)
             if reply_with_search:
+                reply_with_search, extra_files = _parse_code_files(reply_with_search)
+                files += extra_files
                 reply = _normalize_code_blocks(reply_with_search) + "\n\n◐ <i>ответ дополнен поиском</i>"
                 log.info(f"🔍 Search augmented reply for uid={uid}")
     if is_death and _reply_claims_alive(reply):
@@ -1367,9 +1443,11 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                     )
                 },
             ]
-            v_reply = await _groq_request(v_messages, model=active_model)
+            v_reply = await _groq_request(v_messages, max_tokens=max_tokens, model=active_model)
             if v_reply:
+                v_reply, extra_files = _parse_code_files(v_reply)
+                files += extra_files
                 reply = _normalize_code_blocks(v_reply) + "\n\n◐ <i>перепроверено по свежим данным</i>"
                 log.info(f"⚰️ Death-check corrected uid={uid}")
     ai_history[uid].append({"role": "assistant", "content": reply})
-    return reply
+    return reply, files

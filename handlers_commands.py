@@ -26,6 +26,7 @@ from functions import (
     _get_image_base64,
     _price_estimate,
     _reply_ai_html,
+    _send_code_files,
     business_afk,
     business_afk_last_reply,
     business_code_mode,
@@ -633,7 +634,7 @@ async def on_ai_inline(msg: Message):
     if msg.photo:
         image_b64 = await _get_image_base64(bot, msg.photo[-1].file_id)
     try:
-        answer = await groq_chat(owner_id, question or "Опиши что на фото.", image_base64=image_b64)
+        answer, files = await groq_chat(owner_id, question or "Опиши что на фото.", image_base64=image_b64)
     except Exception as e:
         log.error(f"ai inline groq: {e}", exc_info=True)
         answer = (
@@ -642,6 +643,7 @@ async def on_ai_inline(msg: Message):
             "Quiet Mod — бесплатный бот для всех.\n"
             "Спасибо за терпение и уважение ◆"
         )
+        files = []
     try:
         await _business_edit_ai_html(
             msg.business_connection_id, msg.chat.id, msg.message_id,
@@ -653,6 +655,8 @@ async def on_ai_inline(msg: Message):
             msg.business_connection_id, msg.chat.id, msg.message_id,
             f"{answer}\n\n— 👁️ @{BOT_USERNAME}"
         )
+    if files:
+        await _send_code_files(msg.chat.id, files, business_connection_id=msg.business_connection_id)
     log.info(f"🤖 .ai done owner={owner_id} chat={msg.chat.id} with_photo={image_b64 is not None}")
 
 @dp.message(F.text.regexp(r"(?i)^\.ai\s+.+"), F.chat.type.in_({"group", "supergroup", "channel"}))
@@ -671,7 +675,7 @@ async def on_ai_group(msg: Message):
     if msg.photo:
         image_b64 = await _get_image_base64(bot, msg.photo[-1].file_id)
     try:
-        answer = await groq_chat(uid, question, image_base64=image_b64)
+        answer, files = await groq_chat(uid, question, image_base64=image_b64)
     except Exception as e:
         log.error(f"ai group groq: {e}", exc_info=True)
         answer = (
@@ -680,6 +684,7 @@ async def on_ai_group(msg: Message):
             "Quiet Mod — бесплатный бот для всех.\n"
             "Спасибо за терпение и уважение ◆"
         )
+        files = []
     try:
         await _edit_ai_html(thinking, prefix="◆ ", answer=answer)
     except Exception:
@@ -688,6 +693,8 @@ async def on_ai_group(msg: Message):
             await _reply_ai_html(msg, prefix="◆ ", answer=answer, use_reply=True)
         except Exception as e:
             log.error(f"ai_group reply: {e}")
+    if files:
+        await _send_code_files(msg.chat.id, files)
     log.info(f"🤖 .ai group chat={msg.chat.id} user={uid}")
 
 

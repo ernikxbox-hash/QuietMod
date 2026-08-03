@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 import database as db
 from core import S, bot, dp, log
-from functions import LINE, _get_image_base64, _reply_ai_html, ai_history, groq_chat, home_text, kb_ai, kb_back, kb_main
+from functions import LINE, _get_image_base64, _reply_ai_html, _send_code_files, ai_history, groq_chat, home_text, kb_ai, kb_back, kb_main
 
 
 @dp.callback_query(F.data == "ai_open")
@@ -59,11 +59,13 @@ async def ai_msg(msg: Message, state: FSMContext):
             await thinking.edit_text("◇ Не смог загрузить фото — попробуй ещё раз.")
             return
     try:
-        reply = await groq_chat(uid, text_content, image_base64=image_b64)
+        reply, files = await groq_chat(uid, text_content, image_base64=image_b64)
     finally:
         spin_task.cancel()
     await thinking.delete()
     await _reply_ai_html(msg, prefix="◆ ", answer=reply, reply_markup=kb_ai())
+    if files:
+        await _send_code_files(uid, files)
 
 @dp.callback_query(F.data == "ai_clear")
 async def cb_ai_clear(call: CallbackQuery):
