@@ -55,18 +55,27 @@ Telegram Business бот — перехватывает удалённые и и
 ## Структура
 
 ```
-bot.py          # точка входа: init БД, синк чатов, запуск polling, graceful shutdown
-core.py         # конфигурация: env-переменные, bot/dp, логгер, FSM-состояния
-database.py     # слой данных (aiosqlite + SQLite): 7 таблиц, батчеры записи, лимиты архива
-business_api.py # HTTP-обёртки Business-методов Telegram Bot API
-functions.py    # общая логика: ИИ (Groq + ротация ключей), поиск, погода, WBL-фильтр, клавиатуры
-handlers.py     # все обработчики: перехват, инлайн-команды, ЛС-меню, админ-панель, платежи
-tasks.py        # фоновая очистка просроченных сохранённых сообщений (каждые 6 ч)
+bot.py               # точка входа: init БД, синк чатов, запуск polling, graceful shutdown
+core.py              # конфигурация: env-переменные, bot/dp, логгер, FSM-состояния
+database.py          # слой данных (aiosqlite + SQLite): 7 таблиц, батчеры записи, лимиты архива
+business_api.py      # HTTP-обёртки Business-методов Telegram Bot API + кэш владельца connection
+functions.py         # общая логика: ИИ (Groq + ротация ключей), поиск, погода, WBL-фильтр, клавиатуры
+handlers.py          # регистратор хендлеров: порядок импортов = приоритет в aiogram
+handlers_start.py    # /start, /admin, business_connection (предзагрузка владельца)
+handlers_commands.py # инлайн-команды: .spam .mute .nomute .afk .code .wbl .ai .price .curs + форматирование
+handlers_games.py    # ⚔️ Камень·Ножницы·Бумага (.knb)
+handlers_intercept.py# ядро: перехват удалённых/изменённых сообщений + расшифровка голосовых
+handlers_ai.py       # ИИ-консьерж в ЛС и поиск по архиву
+handlers_menu.py     # ЛС-меню: сохранённые, howto, приглашения, профиль, архив, донаты
+handlers_admin.py    # админ-панель, .cmd список функций, рассылки, группы/каналы
+tasks.py             # фоновая очистка просроченных сохранённых сообщений (каждые 6 ч)
 requirements.txt
-Procfile        # Railway / Heroku
-railway.toml    # Railway: volume для data/bot.db
-.env.example    # переменные окружения (создай по таблице ниже)
+Procfile             # Railway / Heroku
+railway.toml         # Railway: volume для data/bot.db
+.env.example         # переменные окружения (создай по таблице ниже)
 ```
+
+> ⚠️ Порядок импортов в `handlers.py` менять нельзя — в aiogram «первый подходящий хендлер выигрывает», и модуль перехвата (`handlers_intercept.py`) должен регистрироваться последним из бизнес-обработчиков, чтобы не съедать инлайн-команды.
 
 ## Деплой на Railway
 

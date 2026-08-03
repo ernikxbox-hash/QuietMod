@@ -1,6 +1,28 @@
+import asyncio
+from typing import Optional
 import aiohttp
-from core import BOT_TOKEN, get_http, log
+from core import BOT_TOKEN, bot, get_http, log
 
+# ── Владелец business-connection (кэш 10 мин) ─────────────────────────
+_BC_OWNER_CACHE: dict[str, tuple[int, float]] = {}
+_BC_OWNER_TTL_SECONDS = 10 * 60
+
+async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
+    """ID владельца подключения — без него не определить хозяина бизнес-чата."""
+    now = asyncio.get_running_loop().time()
+    cached = _BC_OWNER_CACHE.get(conn_id)
+    if cached and cached[1] > now:
+        return cached[0]
+    try:
+        conn = await bot.get_business_connection(conn_id)
+        owner_id = conn.user.id
+    except Exception as e:
+        log.error(f"get_business_connection ({ctx}): {e}")
+        return None
+    _BC_OWNER_CACHE[conn_id] = (owner_id, now + _BC_OWNER_TTL_SECONDS)
+    return owner_id
+
+# ── Business-методы Telegram Bot API (через общую aiohttp-сессию) ─────
 async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, text: str, reply_markup=None) -> tuple[bool, str | None]:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
     payload = {
