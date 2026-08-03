@@ -413,14 +413,6 @@ async def delete_saved_message(save_id: int):
     async with _write_lock:
         await conn.execute("DELETE FROM saved_messages WHERE id=?", (save_id,))
         await conn.commit()
-async def count_saved_messages(owner_id: int) -> int:
-    conn = _get_conn()
-    now = datetime.now().isoformat()
-    async with conn.execute(
-        "SELECT COUNT(*) FROM saved_messages WHERE owner_id=? AND expires_at > ?",
-        (owner_id, now)
-    ) as cur:
-        return (await cur.fetchone())[0]
 async def add_bot_chat(chat_id: int, title: str, chat_type: str):
     conn = _get_conn()
     now = datetime.now().isoformat()
@@ -444,10 +436,6 @@ async def get_all_bot_chats() -> list[dict]:
         "SELECT * FROM bot_chats ORDER BY added_at DESC"
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
-async def count_bot_chats() -> int:
-    conn = _get_conn()
-    async with conn.execute("SELECT COUNT(*) FROM bot_chats") as cur:
-        return (await cur.fetchone())[0]
 
 async def purge_expired_saved():
     conn = _get_conn()
