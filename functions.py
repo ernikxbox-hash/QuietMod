@@ -922,13 +922,31 @@ async def _fetch_erapi_rates() -> Optional[dict[str, float]]:
         log.warning(f"Curs API error: {e}")
         return None
 
-async def _get_curs_ru() -> Optional[str]:
-    """Курс популярных валют к рублю: 1 ед. = ₽.
+def _build_currency_calculator_text(rubles: int, rates: dict[str, float], date_str: str, source: str) -> str:
+    """Собирает текст калькулятора валюты: сколько рублей в разных валютах."""
+    lines = [
+        "💱 <b>КАЛЬКУЛЯТОР ВАЛЮТЫ</b>",
+        f"<code>{LINE}</code>",
+        f"◇ Вход: <b>{rubles:,} ₽</b>",
+        "",
+    ]
+    for code, flag, name in _POPULAR_CURS:
+        rate = rates.get(code)
+        if rate is None or rate <= 0:
+            continue
+        amount = rubles / rate
+        lines.append(f"{flag} {name:<12} → <code>{amount:,.2f}</code> {code}")
+    lines.extend([
+        "",
+        f"<code>{LINE}</code>",
+        f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}",
+        f"— 👁️ @{BOT_USERNAME}",
+    ])
+    return "\n".join(lines)
 
-    Сначала — официальные курсы ЦБ РФ (точный источник для рубля).
-    Валюты, которых нет у ЦБ (например, гривна), дозаполняются из open.er-api.com.
-    Если ЦБ недоступен — полностью переключаемся на open.er-api.com.
-    """
+
+async def _get_curs_ru() -> Optional[tuple[str, dict[str, float], str, str]]:
+    """Курс популярных валют к рублю: 1 ед. = ₽. Возвращает текст, rates, date, source."""
     source = "актуальный курс"
     date_str = date.today().strftime("%d.%m.%Y")
     rates: dict[str, float] = {}
@@ -959,7 +977,7 @@ async def _get_curs_ru() -> Optional[str]:
         lines.append(f"{flag} {name:<12} → <code>{_fmt_curs_rate(rub):>10} ₽</code>")
     if not lines:
         return None
-    return (
+    text = (
         "💱 <b>КУРС ВАЛЮТ К РУБЛЮ</b>\n"
         f"<code>{LINE}</code>\n\n"
         + "\n".join(lines)
@@ -967,6 +985,7 @@ async def _get_curs_ru() -> Optional[str]:
         f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}\n"
         f"— 👁️ @{BOT_USERNAME}"
     )
+    return text, rates, date_str, source
 
 SEARCH_TRIGGERS = [
     "курс", "цена", "цены", "стоимость", "сколько стоит", "подорожал",
