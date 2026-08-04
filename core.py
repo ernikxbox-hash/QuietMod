@@ -14,8 +14,8 @@ GROQ_API_KEY  = os.environ.get("GROQ_API_KEY", "")
 GROQ_API_KEY2 = os.environ.get("GROQ_API_KEY2", "")
 GROQ_API_KEYS = [k for k in (GROQ_API_KEY, GROQ_API_KEY2) if k and k.strip()]
 BOT_USERNAME = "Quiet_Mod_Bot"
-GROQ_MODEL = "llama-3.2-90b-vision-preview"
-GROQ_MODEL_TEXT = "llama-3.2-90b-vision-preview"
+GROQ_MODEL = "llama-3.2-90b-vision"
+GROQ_MODEL_TEXT = "llama-3.2-90b-vision"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
