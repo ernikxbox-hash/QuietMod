@@ -782,15 +782,17 @@ def _curs_prompt() -> str:
     return (
         "🧮 <b>Калькулятор валют</b>\n"
         f"<code>{LINE}</code>\n\n"
-        "Введи сумму в рублях — покажу,\n"
-        "сколько это в разных валютах.\n\n"
-        "◇ Пример: <code>300</code> · <code>1500</code> · <code>1 250,50</code>"
+        "Введи просто число в рублях —\n"
+        "покажу, сколько это в разных валютах.\n\n"
+        "◇ Пример: <code>100</code> · <code>100₽</code> · <code>1 500</code> · <code>1250,50</code>"
     )
 
 
 def _parse_curs_amount(text: str) -> Optional[float]:
-    """Сумма в рублях из текста: 300 · 1 500 · 1250,50. None — некорректно."""
-    t = (text or "").strip().replace(" ", "").replace("\u202f", "").replace(",", ".")
+    """Сумма в рублях: 100 · 100₽ · 100 руб · 100р · 1 500 · 1250,50. None — некорректно."""
+    t = (text or "").strip()
+    t = re.sub(r"(?iu)\s*(₽|рублей|рубля|рубл|руб\.|руб|р\.|р(?![а-яa-z])|rub|rur)\s*$", "", t).strip()
+    t = t.replace("\u202f", "").replace(" ", "").replace(",", ".")
     if not re.fullmatch(r"\d+(\.\d+)?", t):
         return None
     try:
@@ -857,11 +859,14 @@ async def _curs_delete_message(conn_id: Optional[str], chat_id: int, msg_id: int
 
 # ── Калькулятор .curs: сессии без FSM (надёжно работает и в бизнес-чатах) ──
 _CURS_SESSION_TTL = 10 * 60  # сессия калькулятора живёт 10 минут
-_curs_sessions: dict[tuple, dict] = {}  # (conn_id|'', chat_id, user_id) -> {"msg_id", "ts"}
+_curs_sessions: dict[tuple, dict] = {}  # (chat_id, user_id) -> {"msg_id", "ts"}
 
 
 def _curs_session_key(conn_id: Optional[str], chat_id: int, user_id: int) -> tuple:
-    return (conn_id or "", chat_id, user_id)
+    # Ключ — чат + юзер: чат принадлежит одному подключению, поэтому
+    # business_connection_id в ключе не нужен (исключаем расхождение между
+    # callback_query и business_message в бизнес-чатах).
+    return (chat_id, user_id)
 
 
 def _curs_session_save(conn_id: Optional[str], chat_id: int, user_id: int, msg_id: int):
