@@ -313,10 +313,13 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
     except Exception as e:
         log.error(f"send notify to owner={owner_id}: {e}")
         return None
-# Кастомное эмодзи для кнопки «Профиль» (пак CPT_Emoji / @Cryptomus EMOJI).
-# Чтобы узнать ID: команда .emoji CPT_Emoji → выбрать эмодзи → пришли мне его
-# custom_emoji_id — я вставлю сюда. Пустая строка = без иконки (как сейчас).
-CUSTOM_EMOJI_PROFILE = ""
+# Кастомные эмодзи (пак CPT_Emoji / @Cryptomus EMOJI) для кнопок главного меню.
+# ID получены через команду .emoji CPT_Emoji. Пустая строка = без иконки.
+CUSTOM_EMOJI_PROFILE = "5346136537123801643"  # Профиль
+CUSTOM_EMOJI_HOWTO   = "5348292765325212780"  # Подключение
+CUSTOM_EMOJI_SEARCH  = "5345840270279724328"  # Поиск по архиву
+CUSTOM_EMOJI_DONATE  = "5348356047373354143"  # Поддержать проект
+CUSTOM_EMOJI_AI      = "5346024644635804737"  # ИИ-консьерж
 
 
 def kb_main(uid: int) -> InlineKeyboardMarkup:
@@ -334,17 +337,39 @@ def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows.append([
         InlineKeyboardButton(text="◈ Сохранённые ➩", callback_data="show_saved"),
     ])
-    rows.append([InlineKeyboardButton(text="◐ Поиск по архиву", callback_data="search")])
-    rows.append([InlineKeyboardButton(text="◆ ИИ-консьерж — без лимитов", callback_data="ai_open")])
+    rows.append([
+        InlineKeyboardButton(
+            text="◐ Поиск по архиву",
+            callback_data="search",
+            icon_custom_emoji_id=CUSTOM_EMOJI_SEARCH or None,
+        )
+    ])
+    rows.append([
+        InlineKeyboardButton(
+            text="◆ ИИ-консьерж — без лимитов",
+            callback_data="ai_open",
+            icon_custom_emoji_id=CUSTOM_EMOJI_AI or None,
+        )
+    ])
     rows.append([
         InlineKeyboardButton(text="⟡ Приглашения", callback_data="referrals"),
         InlineKeyboardButton(text="✕ Очистить",    callback_data="clear_cache"),
     ])
     rows.append([
         InlineKeyboardButton(text="✦ Предложить",   callback_data="suggest_idea"),
-        InlineKeyboardButton(text="⚙ Подключение",  callback_data="howto"),
+        InlineKeyboardButton(
+            text="⚙ Подключение",
+            callback_data="howto",
+            icon_custom_emoji_id=CUSTOM_EMOJI_HOWTO or None,
+        ),
     ])
-    rows.append([InlineKeyboardButton(text="⟡ Поддержать проект", callback_data="donate")])
+    rows.append([
+        InlineKeyboardButton(
+            text="⟡ Поддержать проект",
+            callback_data="donate",
+            icon_custom_emoji_id=CUSTOM_EMOJI_DONATE or None,
+        )
+    ])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 def kb_back(target: str = "menu", label: str = "← В меню") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
