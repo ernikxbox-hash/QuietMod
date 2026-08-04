@@ -27,6 +27,7 @@ from core import (
 from business_api import _business_edit_message_ex
 
 ai_history: dict[int, list] = {}
+_last_vision_image: dict[int, tuple[str, str]] = {}  # uid -> (mime, base64): последнее фото для follow-up вопросов
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
 business_muted_chats: set[tuple[str, int]] = set()
@@ -1296,9 +1297,14 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
         log.error("Groq: нет ни одного API-ключа (GROQ_API_KEY / GROQ_API_KEY2 / GROQ_API_KEY3)")
         return None
     start = _GROQ_KEY_INDEX % n
+    rate_limited = False  # 413 (TPM-лимит) общий для всех ключей — ротация бессмысленна
     for i in range(n):
         idx = (start + i) % n
         api_key = keys[idx]
+        if rate_limited:
+            # Все ключи в одном тире с одним TPM-лимитом: вместо ротации ждём,
+            # чтобы лимит (8000 токенов/мин) успел сброситься, и пробуем снова.
+            await asyncio.sleep(5)
         try:
             session = get_http()
             async with session.post(
@@ -1325,9 +1331,11 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
                     err = data.get("error") if isinstance(data, dict) else data
                     log.warning(
                         f"Groq key {idx + 1}/{n} failed (model={model}, status={resp.status}): "
-                        f"{_json.dumps(err, ensure_ascii=False)[:200]} — пробую следующий ключ"
+                        f"{_json.dumps(err, ensure_ascii=False)[:200]}"
                     )
                     await db.record_stat(f"groq_key{idx + 1}_fail", f"status={resp.status}")
+                    if resp.status == 413:
+                        rate_limited = True  # TPM-лимит — общий, ждём и пробуем тот же ключ
                     continue
                 if "choices" not in data:
                     log.error(
@@ -1463,21 +1471,22 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
     if egg:
         return egg, []
     history = ai_history.setdefault(uid, [])
+    # ВАЖНО: base64-картинку НЕ кладём в историю — она весит тысячи токенов,
+    # и старые картинки раздували следующие запросы за TPM-лимит Groq (8K/мин).
+    # В историю попадает только текст; картинка живёт в текущем запросе.
     if image_base64:
-        mime = image_mime or "image/jpeg"
-        content = [
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{image_base64}"}
-            },
-            {
-                "type": "text",
-                "text": user_msg if user_msg else "Опиши что на фото."
-            }
-        ]
+        _last_vision_image[uid] = (image_mime or "image/jpeg", image_base64)
+        history.append({"role": "user", "content": user_msg if user_msg else "[фото]"})
     else:
-        content = user_msg
-    history.append({"role": "user", "content": content})
+        # Follow-up вопрос после фото: если последнее СООБЩЕНИЕ ЮЗЕРА было «[фото]»
+        # и нового фото нет — подхватываем последнюю картинку, чтобы не терять контекст.
+        # (после фото-обмена в конце истории стоит ответ ассистента, поэтому
+        #  ищем именно последний user-элемент, а не history[-1])
+        cached = _last_vision_image.get(uid)
+        last_user = next((m for m in reversed(history) if m.get("role") == "user"), None)
+        if cached and last_user and last_user.get("content") == "[фото]" and not user_msg.strip().startswith("."):
+            image_mime, image_base64 = cached
+        history.append({"role": "user", "content": user_msg})
     if len(history) > 10:
         ai_history[uid] = history[-10:]
         history = ai_history[uid]
@@ -1500,7 +1509,27 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
             log.info(f"💱 Currency rate for uid={uid}: {user_msg[:60]}")
             ai_history[uid].append({"role": "assistant", "content": currency_text})
             return currency_text, []
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    if image_base64:
+        # Vision-запрос: system + последние 2 сообщения истории (текст) + текущая картинка.
+        # Урезанный контекст — чтобы запрос гарантированно влезал в TPM-лимит Qwen.
+        mime = image_mime or "image/jpeg"
+        image_content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{image_base64}"}
+            },
+            {
+                "type": "text",
+                "text": user_msg if user_msg else "Опиши что на фото."
+            }
+        ]
+        # Контекст — только сообщения ДО текущего (текущее придёт с картинкой ниже),
+        # и только последние 2, чтобы запрос был лёгким.
+        context = history[-3:-1]
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + context
+        messages.append({"role": "user", "content": image_content})
+    else:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     today_str = date.today().strftime("%d.%m.%Y")
     is_death = not image_base64 and _is_death_query(user_msg)
     search_query = user_msg
@@ -1532,9 +1561,9 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
                 )
             messages = messages + [{"role": "user", "content": search_instr}]
             already_searched = True
-    # Vision-модель (qwen) — thinking-модель: токены размышлений тоже считаются,
-    # поэтому для картинок даём больший бюджет, чтобы ответ не обрезался.
-    max_tokens = 8192 if (_wants_file(user_msg) or image_base64) else 2048
+    # Vision-модель (qwen) — thinking-модель, но TPM-лимит Groq 8K/мин считается
+    # и на выходные токены: бюджет 4096 (не 8192), чтобы не упереться в лимит.
+    max_tokens = 8192 if _wants_file(user_msg) else (4096 if image_base64 else 2048)
     reply = await _groq_request(messages, max_tokens=max_tokens, model=active_model)
     if reply is None:
         return (
