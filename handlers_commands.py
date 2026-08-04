@@ -7,7 +7,6 @@ from typing import Optional
 from aiogram import F
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import StateFilter
-from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from html import escape as html_escape
 
@@ -21,7 +20,6 @@ from business_api import (
 from core import BOT_USERNAME, bot, dp, log
 from functions import (
     LINE,
-    _build_currency_calculator_text,
     _business_edit_ai_html,
     _edit_ai_html,
     _get_curs_ru,
@@ -755,36 +753,6 @@ async def on_price_group(msg: Message):
 
 
 # ── .curs (Business + группы/ЛС) ───────────────────────────────────────
-_CURS_KB = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="🧮 Калькулятор валюты", callback_data="curs_calc")],
-    [InlineKeyboardButton(text="← В меню", callback_data="curs_exit")],
-])
-
-async def _show_curs_message(msg: Message, *, business_connection_id: str | None = None) -> None:
-    data = await _get_curs_ru()
-    if data is None:
-        text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
-        markup = None
-    else:
-        text, _, _, _ = data
-        markup = _CURS_KB
-    if business_connection_id:
-        await _business_edit_ai_html(
-            business_connection_id, msg.chat.id, msg.message_id,
-            prefix="", answer=text,
-        )
-        try:
-            await bot.edit_message_reply_markup(
-                chat_id=msg.chat.id,
-                message_id=msg.message_id,
-                reply_markup=markup,
-            )
-        except Exception:
-            pass
-        return
-    await _reply_ai_html(msg, prefix="", answer=text, reply_markup=markup)
-
-
 @dp.business_message(F.text.regexp(r"(?i)^\.curs$"))
 async def on_curs_inline(msg: Message):
     if not msg.business_connection_id:
@@ -794,11 +762,13 @@ async def on_curs_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    try:
-        await bot.delete_message(msg.chat.id, msg.message_id)
-    except Exception:
-        pass
-    await _show_curs_message(msg, business_connection_id=msg.business_connection_id)
+    curs_text = await _get_curs_ru()
+    if curs_text is None:
+        curs_text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
+    await _business_edit_ai_html(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        prefix="", answer=curs_text,
+    )
     log.info(f"💱 .curs business owner={owner_id} chat={msg.chat.id}")
 
 @dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.curs$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
@@ -809,70 +779,11 @@ async def on_curs_anywhere(msg: Message):
     await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
     if msg.chat.type in ("group", "supergroup", "channel"):
         await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
-    try:
-        await msg.delete()
-    except Exception:
-        pass
-    await _show_curs_message(msg)
+    curs_text = await _get_curs_ru()
+    if curs_text is None:
+        curs_text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
+    await _reply_ai_html(msg, prefix="", answer=curs_text)
     log.info(f"💱 .curs chat={msg.chat.id} user={uid}")
-
-
-@dp.callback_query(F.data == "curs_calc")
-async def cb_curs_calc(call: CallbackQuery, state: FSMContext):
-    await state.set_state("curs_calc")
-    await call.answer()
-    await call.message.edit_text(
-        "🧮 <b>Калькулятор валюты</b>\n"
-        f"<code>{LINE}</code>\n\n"
-        "Отправь сумму в рублях, например: <b>300</b>\n\n"
-        "Бот пересчитает её в популярные валюты по текущему курсу.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="← Назад к курсу", callback_data="curs_back")],
-            [InlineKeyboardButton(text="← В меню", callback_data="curs_exit")],
-        ]),
-    )
-
-
-@dp.message(F.text, F.chat.type.in_({"private"}))
-async def on_curs_calc_input(msg: Message, state: FSMContext):
-    current = await state.get_state()
-    if current != "curs_calc":
-        return
-    try:
-        rubles = int((msg.text or "").strip())
-    except Exception:
-        await msg.answer("◇ Введи только число в рублях, например: 300")
-        return
-    data = await _get_curs_ru()
-    if data is None:
-        await msg.answer("⚠️ Не удалось получить актуальный курс.")
-        return
-    text, rates, date_str, source = data
-    calculator_text = _build_currency_calculator_text(rubles, rates, date_str, source)
-    await state.clear()
-    await msg.answer(calculator_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="← Назад к курсу", callback_data="curs_back")],
-        [InlineKeyboardButton(text="← В меню", callback_data="curs_exit")],
-    ]))
-
-
-@dp.callback_query(F.data == "curs_back")
-async def cb_curs_back(call: CallbackQuery):
-    await call.answer()
-    data = await _get_curs_ru()
-    if data is None:
-        text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
-    else:
-        text, _, _, _ = data
-    await call.message.edit_text(text, reply_markup=_CURS_KB)
-
-
-@dp.callback_query(F.data == "curs_exit")
-async def cb_curs_exit(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.answer()
-    from functions import home_text, kb_main
-    await call.message.edit_text(home_text(), reply_markup=kb_main(call.from_user.id))
 
 
 # ── Форматирование: .bold .italic .mono .line .crossed .hidden .quote ─

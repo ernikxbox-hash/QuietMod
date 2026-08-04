@@ -510,7 +510,7 @@ SYSTEM_PROMPT = (
     "Ты сдержанный, элегантный ИИ-консьерж внутри Telegram-бота Quiet Mod. "
     "Отвечай чётко, без лишней воды. Язык — язык пользователя. "
     "СТРОГО: весь ответ должен быть на ОДНОМ языке — языке вопроса пользователя. "
-    "Никогда не вставляй слова или фразы на других языков (вьетнамский, китайский и т.п.), "
+    "Никогда не вставляй слова или фразы на других языках (вьетнамский, китайский и т.п.), "
     "даже одно слово — это критическая ошибка.\n\n"
     "Будь дружелюбным и полезным, держи стиль лаконичного люкса.\n\n"
     "ВАЖНО — ФОРМАТИРОВАНИЕ:\n"
@@ -531,11 +531,13 @@ SYSTEM_PROMPT = (
     "— Не смешивай <b> или <i> внутри <pre><code>...</code></pre> — блок кода "
     "должен быть только с <pre><code> и ничем больше.\n\n"
     "ФАЙЛЫ — ОТДЕЛЬНОЕ ПРАВИЛО:\n"
-    "— Используй <FILE name=\"calculator.py\">код</FILE> ТОЛЬКО если пользователь явно просит файл, документ, скрипт, программу, код или готовый файл в конкретном формате.\n"
-    "— Если пользователь просто спрашивает, как сделать что-то, хочет объяснение или общую помощь — НЕ отправляй файл автоматически.\n"
-    "— Если пользователь явно просит файл, документ или готовый текст/презентацию в виде файла, используй маркер <FILE ...> и укажи нужное расширение, если оно было запрошено.\n"
+    "— Если пользователь просит создать файл, скрипт, программу или код «файлом» — "
+    "оборачивай каждый файл в маркер: <FILE name=\"calculator.py\">код</FILE>.\n"
+    "— Файлов может быть НЕСКОЛЬКО подряд (например, проект: main.py, settings.py, README.md) — "
+    "каждый файл в своём маркере.\n"
     "— Внутри маркера пиши код как есть: без ``` и без HTML-тегов.\n"
-    "— Вне маркеров кратко опиши, что делает файл(ы) и как его запустить."
+    "— Вне маркеров кратко опиши, что делает файл(ы) и как его запустить.\n"
+    "— Не используй маркеры, если пользователь не просил файл — просто отвечай как обычно."
 )
 
 async def _get_image_base64(bot: Bot, file_id: str) -> Optional[str]:
@@ -922,31 +924,13 @@ async def _fetch_erapi_rates() -> Optional[dict[str, float]]:
         log.warning(f"Curs API error: {e}")
         return None
 
-def _build_currency_calculator_text(rubles: int, rates: dict[str, float], date_str: str, source: str) -> str:
-    """Собирает текст калькулятора валюты: сколько рублей в разных валютах."""
-    lines = [
-        "💱 <b>КАЛЬКУЛЯТОР ВАЛЮТЫ</b>",
-        f"<code>{LINE}</code>",
-        f"◇ Вход: <b>{rubles:,} ₽</b>",
-        "",
-    ]
-    for code, flag, name in _POPULAR_CURS:
-        rate = rates.get(code)
-        if rate is None or rate <= 0:
-            continue
-        amount = rubles / rate
-        lines.append(f"{flag} {name:<12} → <code>{amount:,.2f}</code> {code}")
-    lines.extend([
-        "",
-        f"<code>{LINE}</code>",
-        f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}",
-        f"— 👁️ @{BOT_USERNAME}",
-    ])
-    return "\n".join(lines)
+async def _get_curs_ru() -> Optional[str]:
+    """Курс популярных валют к рублю: 1 ед. = ₽.
 
-
-async def _get_curs_ru() -> Optional[tuple[str, dict[str, float], str, str]]:
-    """Курс популярных валют к рублю: 1 ед. = ₽. Возвращает текст, rates, date, source."""
+    Сначала — официальные курсы ЦБ РФ (точный источник для рубля).
+    Валюты, которых нет у ЦБ (например, гривна), дозаполняются из open.er-api.com.
+    Если ЦБ недоступен — полностью переключаемся на open.er-api.com.
+    """
     source = "актуальный курс"
     date_str = date.today().strftime("%d.%m.%Y")
     rates: dict[str, float] = {}
@@ -977,7 +961,7 @@ async def _get_curs_ru() -> Optional[tuple[str, dict[str, float], str, str]]:
         lines.append(f"{flag} {name:<12} → <code>{_fmt_curs_rate(rub):>10} ₽</code>")
     if not lines:
         return None
-    text = (
+    return (
         "💱 <b>КУРС ВАЛЮТ К РУБЛЮ</b>\n"
         f"<code>{LINE}</code>\n\n"
         + "\n".join(lines)
@@ -985,7 +969,6 @@ async def _get_curs_ru() -> Optional[tuple[str, dict[str, float], str, str]]:
         f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}\n"
         f"— 👁️ @{BOT_USERNAME}"
     )
-    return text, rates, date_str, source
 
 SEARCH_TRIGGERS = [
     "курс", "цена", "цены", "стоимость", "сколько стоит", "подорожал",
@@ -1289,80 +1272,12 @@ def _safe_filename(name: str) -> str:
         name = name[:60] + "." + ext
     return name
 
-_FILE_TRIGGERS = (
-    "скинь файл", "отправь файл", "дай файл", "создай файл", "сделай файл",
-    "готовый файл", "готовый file", "в виде файла", "в формате файла",
-    "сделай документ", "дай готовый", "пришли файл", "создай документ",
-    "сделай текстовый файл", "сделай txt файл", "сделай md файл",
-    "сделай html файл", "сделай json файл", "сделай csv файл",
-    "сделай презентацию", "презентацию", "доклад",
-)
+_FILE_TRIGGERS = ("файл", "скрипт", "программ", "сделай код", "напиши код", "сгенерируй код", "мини-игр", "игру на")
 
 def _wants_file(text: str) -> bool:
-    """Проверяем, просит ли пользователь файл/документ/готовый текст явно и целенаправленно."""
+    """Пользователь просит создать файл/код файлом — даём модели больше токенов."""
     t = (text or "").lower()
-    if not t:
-        return False
-    if any(k in t for k in _FILE_TRIGGERS):
-        return True
-    if re.search(r"\b(?:file|файл)\s*(?:\.|\s|$)", t):
-        return True
-    if re.search(r"\b(?:\.txt|\.md|\.py|\.js|\.ts|\.html|\.css|\.json|\.csv|\.docx|\.pdf)\b", t):
-        return True
-    if re.search(r"\b(?:скинь|отправь|дай|создай|сделай|пришли)\b.*\b(?:файл|документ|презентацию|текст)\b", t):
-        return True
-    return False
-
-
-def _infer_file_name(text: str) -> str:
-    """Подбираем имя файла под запрос пользователя, если нужно отправить fallback-файл."""
-    t = (text or "").lower()
-    if ".py" in t or "python" in t:
-        return "script.py"
-    if ".html" in t or "html" in t:
-        return "page.html"
-    if ".json" in t or "json" in t:
-        return "data.json"
-    if ".csv" in t or "csv" in t:
-        return "data.csv"
-    if ".md" in t or "markdown" in t:
-        return "notes.md"
-    if "презентац" in t or "доклад" in t:
-        return "presentation.txt"
-    if ".txt" in t or "текст" in t:
-        return "document.txt"
-    return "file.txt"
-
-
-def _append_task_suggestions(reply: str, user_msg: str) -> str:
-    """Добавляет 3 короткие подсказки для кодинга, презентаций и похожих задач."""
-    text = (reply or "").strip()
-    if not text or "могу ещё улучшить" in text.lower():
-        return text
-    t = (user_msg or "").lower()
-    is_code_task = any(k in t for k in ("код", "скрипт", "python", "javascript", "html", "css", "json", "бот", "api", "файл"))
-    is_presentation_task = any(k in t for k in ("презентац", "доклад", "тезис", "план", "структур"))
-    if not (is_code_task or is_presentation_task):
-        return text
-    if is_code_task and is_presentation_task:
-        suggestions = [
-            "добавить более понятную структуру и навигацию",
-            "сделать текст более живым и убедительным",
-            "добавить практический пример или кейс",
-        ]
-    elif is_code_task:
-        suggestions = [
-            "добавить обработку ошибок и fallback",
-            "сделать интерфейс чище и удобнее",
-            "добавить тесты или примеры использования",
-        ]
-    else:
-        suggestions = [
-            "сделать текст более цепляющим и кратким",
-            "добавить сильное вступление и заключение",
-            "включить 1–2 практических примера",
-        ]
-    return f"{text}\n\nМогу ещё улучшить:\n• {suggestions[0]}\n• {suggestions[1]}\n• {suggestions[2]}"
+    return any(k in t for k in _FILE_TRIGGERS)
 
 def _parse_code_files(text: str) -> tuple[str, list[dict]]:
     """Извлекает <FILE name="...">код</FILE>-блоки из ответа ИИ.
@@ -1483,9 +1398,6 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
         )
     reply, files = _parse_code_files(reply)
     reply = _normalize_code_blocks(reply)
-    if _wants_file(user_msg) and not files and reply.strip():
-        files = [{"name": _infer_file_name(user_msg), "content": reply}]
-    reply = _append_task_suggestions(reply, user_msg)
     if already_searched:
         reply += "\n\n◐ <i>ответ дополнен поиском</i>"
     if not image_base64 and not already_searched and _needs_search(reply, user_msg):

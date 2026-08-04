@@ -8,9 +8,9 @@ from aiogram.enums import ParseMode
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-ADMIN_ID = int(os.environ.get("ADMIN_ID", "0"))
-GROQ_API_KEY  = os.environ.get("GROQ_API_KEY", "")
+BOT_TOKEN = os.environ["BOT_TOKEN"]
+ADMIN_ID = int(os.environ["ADMIN_ID"])
+GROQ_API_KEY  = os.environ["GROQ_API_KEY"]
 GROQ_API_KEY2 = os.environ.get("GROQ_API_KEY2", "")
 GROQ_API_KEYS = [k for k in (GROQ_API_KEY, GROQ_API_KEY2) if k and k.strip()]
 BOT_USERNAME = "Quiet_Mod_Bot"
@@ -22,11 +22,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("bot")
-if BOT_TOKEN:
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-else:
-    bot = Bot(token="123456:ABC", default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
 class S(StatesGroup):
