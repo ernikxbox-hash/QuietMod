@@ -1,6 +1,7 @@
 """Все точечные команды: .spam .mute .nomute .afk .code .wbl .ai .price .curs и форматирование."""
 import asyncio
 import re
+import time
 from datetime import date, datetime, timezone
 from typing import Optional
 
@@ -870,7 +871,10 @@ def _curs_session_key(conn_id: Optional[str], chat_id: int, user_id: int) -> tup
 
 
 def _curs_session_save(conn_id: Optional[str], chat_id: int, user_id: int, msg_id: int):
-    now = asyncio.get_running_loop().time()
+    # time.monotonic() вместо asyncio.get_running_loop().time():
+    # сессию читают фильтры хендлеров, а их aiogram запускает в отдельном
+    # потоке (run_in_executor), где нет running event loop.
+    now = time.monotonic()
     for k in [k for k, v in _curs_sessions.items() if now - v.get("ts", 0) > _CURS_SESSION_TTL]:
         _curs_sessions.pop(k, None)
     _curs_sessions[_curs_session_key(conn_id, chat_id, user_id)] = {"msg_id": msg_id, "ts": now}
@@ -881,7 +885,7 @@ def _curs_session_get(conn_id: Optional[str], chat_id: int, user_id: int) -> Opt
     data = _curs_sessions.get(key)
     if not data:
         return None
-    now = asyncio.get_running_loop().time()
+    now = time.monotonic()
     if now - data.get("ts", 0) > _CURS_SESSION_TTL:
         _curs_sessions.pop(key, None)
         return None
