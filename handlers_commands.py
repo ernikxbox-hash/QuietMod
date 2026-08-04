@@ -616,7 +616,31 @@ async def cb_unwbl_btn(call: CallbackQuery):
 
 
 # ── .ai (Business + группы) ────────────────────────────────────────────
-@dp.business_message(F.text.regexp(r"(?i)^\.ai\s+.+"))
+async def _ai_photo_base64(msg: Message) -> Optional[str]:
+    """Фото для ИИ: из самого сообщения .ai или из того, на которое ответили.
+
+    Ищем photo (или документ-картинку) сначала в msg, затем в reply_to_message —
+    чтобы можно было «ответить» на чужое фото командой .ai и попросить распознать.
+    """
+    candidates = []
+    if msg.photo:
+        candidates.append(msg.photo[-1])
+    if msg.document and (msg.document.mime_type or "").startswith("image/"):
+        candidates.append(msg.document)
+    reply = msg.reply_to_message
+    if reply:
+        if reply.photo:
+            candidates.append(reply.photo[-1])
+        if reply.document and (reply.document.mime_type or "").startswith("image/"):
+            candidates.append(reply.document)
+    for item in candidates:
+        b64 = await _get_image_base64(bot, item.file_id)
+        if b64:
+            return b64
+    return None
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.ai(\s+.+)?$"))
 async def on_ai_inline(msg: Message):
     if not msg.business_connection_id:
         return
@@ -627,15 +651,40 @@ async def on_ai_inline(msg: Message):
         return
     raw_text = msg.text or msg.caption or ""
     question = raw_text[raw_text.index(" ") + 1:].strip() if " " in raw_text else ""
+    has_photo = bool(
+        msg.photo or (msg.document and (msg.document.mime_type or "").startswith("image/"))
+        or (msg.reply_to_message and (
+            msg.reply_to_message.photo
+            or (msg.reply_to_message.document and (msg.reply_to_message.document.mime_type or "").startswith("image/"))
+        ))
+    )
+    if not question and not has_photo:
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            (
+                "◇ <b>.ai</b> — задай вопрос или <b>ответь на фото</b>, "
+                "чтобы я распознал, что на нём.\n\n"
+                "◇ <i>Как использовать:</i>\n"
+                "   · <code>.ai что на фото?</code> — ответом на фото\n"
+                "   · <code>.ai реши задачу</code> — фото задачи\n"
+                "   · <code>.ai твой вопрос</code>\n\n"
+                "👁️ Распознаю фото · решаю задачи с картинок"
+            ),
+        )
+        return
     ok = await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
         "◆ · · ·"
     )
     if not ok:
         return
-    image_b64 = None
-    if msg.photo:
-        image_b64 = await _get_image_base64(bot, msg.photo[-1].file_id)
+    image_b64 = await _ai_photo_base64(msg)
+    if has_photo and not image_b64:
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            "◇ <b>Не смог загрузить фото</b> — попробуй ещё раз или отправь фото заново.",
+        )
+        return
     try:
         answer, files = await groq_chat(owner_id, question or "Опиши что на фото.", image_base64=image_b64)
     except Exception as e:
@@ -662,23 +711,44 @@ async def on_ai_inline(msg: Message):
         await _send_code_files(msg.chat.id, files, business_connection_id=msg.business_connection_id)
     log.info(f"🤖 .ai done owner={owner_id} chat={msg.chat.id} with_photo={image_b64 is not None}")
 
-@dp.message(F.text.regexp(r"(?i)^\.ai\s+.+"), F.chat.type.in_({"group", "supergroup", "channel"}))
+@dp.message(F.text.regexp(r"(?i)^\.ai(\s+.+)?$"), F.chat.type.in_({"group", "supergroup", "channel"}))
 async def on_ai_group(msg: Message):
     if not msg.from_user:
         return
     uid = msg.from_user.id
     raw_text = msg.text or msg.caption or ""
     question = raw_text[raw_text.index(" ") + 1:].strip() if " " in raw_text else ""
-    if not question:
+    has_photo = bool(
+        msg.photo or (msg.document and (msg.document.mime_type or "").startswith("image/"))
+        or (msg.reply_to_message and (
+            msg.reply_to_message.photo
+            or (msg.reply_to_message.document and (msg.reply_to_message.document.mime_type or "").startswith("image/"))
+        ))
+    )
+    if not question and not has_photo:
+        await msg.reply(
+            "◇ <b>.ai</b> — задай вопрос или <b>ответь на фото</b>, "
+            "чтобы я распознал, что на нём.\n\n"
+            "◇ <i>Как использовать:</i>\n"
+            "   · <code>.ai что на фото?</code> — ответом на фото\n"
+            "   · <code>.ai реши задачу</code> — фото задачи\n"
+            "   · <code>.ai твой вопрос</code>\n\n"
+            "👁️ Распознаю фото · решаю задачи с картинок"
+        )
         return
     await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
     await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
     thinking = await msg.reply("◆ · · ·")
-    image_b64 = None
-    if msg.photo:
-        image_b64 = await _get_image_base64(bot, msg.photo[-1].file_id)
+    image_b64 = await _ai_photo_base64(msg)
+    if has_photo and not image_b64:
+        try:
+            await thinking.delete()
+        except Exception:
+            pass
+        await msg.reply("◇ <b>Не смог загрузить фото</b> — попробуй ещё раз или отправь фото заново.")
+        return
     try:
-        answer, files = await groq_chat(uid, question, image_base64=image_b64)
+        answer, files = await groq_chat(uid, question or "Опиши что на фото.", image_base64=image_b64)
     except Exception as e:
         log.error(f"ai group groq: {e}", exc_info=True)
         answer = (
