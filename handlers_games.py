@@ -1,4 +1,15 @@
-"""⚔️ Камень · Ножницы · Бумага: в ЛС (Business) и в группах по вызову."""
+"""⚔️ Камень · Ножницы · Бумага (.knb) — написана с нуля.
+
+Надёжная схема:
+- Сообщение с командой .knb удаляется, игровое поле/вызов отправляется
+  НОВЫМ сообщением (его message_id хранится в состоянии игры).
+- Всё дальнейшее — через inline-кнопки: ходы, реванш, отмена.
+- Ключ игры: (mode, conn_id, chat_id) для бизнес-чатов, (group, chat_id)
+  для обычных групп. Ключ одинаково строится и в хендлере команды,
+  и в callback'ах — коллизий нет.
+- Старая незавершённая игра в том же чате автоматически закрывается,
+  когда начинается новая. Протухшие игры (15 минут) подчищаются.
+"""
 import asyncio
 import random
 import re
@@ -11,6 +22,7 @@ from html import escape as html_escape
 
 import database as db
 from business_api import (
+    _business_delete_message_ex,
     _business_edit_message,
     _business_send_message_ex,
     _get_owner_id_cached,
@@ -24,20 +36,26 @@ _KNB_STALE_SECONDS = 15 * 60
 
 _GROUP_MEMBERS: dict[int, dict[int, dict]] = {}  # chat_id -> {user_id: {id, username, full_name}}
 
+
+# ── Утилиты ────────────────────────────────────────────────────────────
 def _knb_game_alive(game: dict) -> bool:
     """True, если игра/вызов ещё актуальна (не протухла за 15 минут)."""
     ts = game.get("ts", 0) or 0
     if ts <= 0:
-        return False  # без метки времени игра считается протухшей
+        return False
     return (time.monotonic() - ts) < _KNB_STALE_SECONDS
 
 
 def _knb_forget_stale() -> None:
-    """Подчищает все протухшие игры (старше 15 минут) из памяти."""
+    """Подчищает протухшие игры из памяти."""
     now = time.monotonic()
-    stale = [k for k, g in knb_games.items() if (g.get("ts", 0) or 0) <= 0 or (now - (g.get("ts", 0) or 0)) >= _KNB_STALE_SECONDS]
+    stale = [
+        k for k, g in knb_games.items()
+        if (g.get("ts", 0) or 0) <= 0 or (now - (g.get("ts", 0) or 0)) >= _KNB_STALE_SECONDS
+    ]
     for k in stale:
         knb_games.pop(k, None)
+
 
 def _knb_cache_member(chat_id: int, user) -> None:
     if not user or not getattr(user, "id", None):
@@ -49,10 +67,12 @@ def _knb_cache_member(chat_id: int, user) -> None:
         "full_name": user.full_name or "",
     }
 
+
 def _knb_display_name(name: str, username: str) -> str:
     if username:
         return f"@{username}"
     return html_escape(name) or "Собеседник"
+
 
 def _knb_header(game: dict) -> str:
     head = (
@@ -63,10 +83,9 @@ def _knb_header(game: dict) -> str:
     sa = game.get("score_a", 0)
     sb = game.get("score_b", 0)
     if sa or sb:
-        head += (
-            f"📊 Счёт: {game['a_name']}  <b>{sa}:{sb}</b>  {game['b_name']}\n\n"
-        )
+        head += f"📊 Счёт: {game['a_name']}  <b>{sa}:{sb}</b>  {game['b_name']}\n\n"
     return head
+
 
 def _knb_challenge_text(game: dict) -> str:
     a_link = f"<a href=\"tg://user?id={game['a_id']}\">{game['a_name']}</a>"
@@ -80,6 +99,7 @@ def _knb_challenge_text(game: dict) -> str:
         f"◇ {b_link}, жми <b>«⚔️ Принять бой»</b> 👇"
     )
 
+
 def _knb_move_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -90,11 +110,13 @@ def _knb_move_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✕ Отменить", callback_data="knb_cancel")],
     ])
 
+
 def _knb_result_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔁 Сыграть ещё", callback_data="knb_again")],
         [InlineKeyboardButton(text="✕ Закрыть", callback_data="knb_cancel")],
     ])
+
 
 def _knb_challenge_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -102,10 +124,25 @@ def _knb_challenge_kb() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="✕ Отменить", callback_data="knb_cancel")],
     ])
 
+
+def _knb_key_from_call(call: CallbackQuery) -> Optional[tuple]:
+    """Ключ игры из callback'а — тот же, что и в хендлере команды."""
+    if not call.message or not call.message.chat:
+        return None
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    chat_id = call.message.chat.id
+    if conn_id:
+        prefix = "dm" if getattr(call.message.chat, "type", None) == "private" else "bg"
+        return (prefix, conn_id, chat_id)
+    return ("group", chat_id)
+
+
 async def _knb_edit(game: dict, msg_id: int, text: str, reply_markup=None) -> bool:
+    """Обновляет сообщение игры (после хода, реванша, отмены)."""
     if game.get("conn_id"):
-        markup = reply_markup.model_dump(exclude_none=True) if isinstance(reply_markup, InlineKeyboardMarkup) else reply_markup
-        return await _business_edit_message(game["conn_id"], game["chat_id"], msg_id, text, reply_markup=markup)
+        return await _business_edit_message(game["conn_id"], game["chat_id"], msg_id, text, reply_markup=reply_markup)
     try:
         await bot.edit_message_text(
             text,
@@ -118,17 +155,20 @@ async def _knb_edit(game: dict, msg_id: int, text: str, reply_markup=None) -> bo
         log.warning(f"knb edit: {e}")
         return False
 
-def _knb_game_key_from_call(call: CallbackQuery) -> Optional[tuple]:
-    if not call.message or not call.message.chat:
-        return None
-    conn_id = getattr(call, "business_connection_id", None)
-    if not conn_id and call.message:
-        conn_id = getattr(call.message, "business_connection_id", None)
-    chat_id = call.message.chat.id
+
+async def _knb_delete_command(msg: Message, conn_id: Optional[str]):
+    """Удаляет сообщение с командой .knb (в бизнес-чатах и группах)."""
     if conn_id:
-        prefix = "dm" if getattr(call.message.chat, "type", None) == "private" else "bg"
-        return (prefix, conn_id, chat_id)
-    return ("group", chat_id)
+        try:
+            await _business_delete_message_ex(conn_id, msg.message_id)
+        except Exception:
+            pass
+    else:
+        try:
+            await bot.delete_message(msg.chat.id, msg.message_id)
+        except Exception:
+            pass
+
 
 async def _knb_resolve_target(msg: Message) -> Optional[dict]:
     """Определяет, кого вызывают на бой: mention-сущность, @username из кэша или reply."""
@@ -147,6 +187,8 @@ async def _knb_resolve_target(msg: Message) -> Optional[dict]:
         return {"id": u.id, "full_name": u.full_name or "", "username": u.username or ""}
     return None
 
+
+# ── Старт игры: ЛС (Business) — владелец vs собеседник ───────────────
 @dp.business_message(F.text.regexp(r"(?i)^\.knb(\s+.*)?$"))
 async def on_knb_start(msg: Message):
     conn_id = msg.business_connection_id
@@ -157,16 +199,12 @@ async def on_knb_start(msg: Message):
         return
     chat_type = getattr(msg.chat, "type", None)
     if chat_type == "private":
-        # ── ЛС (Business): мгновенная игра владелец vs собеседник ──
         if not msg.from_user or msg.from_user.id != owner_id:
             return
         _knb_forget_stale()
         key = ("dm", conn_id, msg.chat.id)
-        # Старая незавершённая игра в этом чате автоматически закрывается —
-        # новая начинается сразу (сообщение .knb превращается в игровое поле).
-        was_restart = key in knb_games
-        if was_restart:
-            knb_games.pop(key, None)
+        if key in knb_games:
+            knb_games.pop(key, None)  # старую игру закрываем, начинаем новую
         game = {
             "mode": "dm",
             "chat_id": msg.chat.id,
@@ -188,28 +226,23 @@ async def on_knb_start(msg: Message):
         }
         knb_games[key] = game
         first_name = game["a_name"] if game["turn"] == "a" else game["b_name"]
-        # Игровое поле — прямо в сообщение .knb (одна правка, надёжно)
-        ok = await _business_edit_message(
-            conn_id, msg.chat.id, msg.message_id,
-            _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}",
-            reply_markup=_knb_move_kb(),
+        text = _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}"
+        ok, retry_after, _ = await _business_send_message_ex(
+            conn_id, msg.chat.id, text, reply_markup=_knb_move_kb(), parse_mode="HTML",
         )
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            ok, _, _ = await _business_send_message_ex(
+                conn_id, msg.chat.id, text, reply_markup=_knb_move_kb(), parse_mode="HTML",
+            )
         if not ok:
-            # Не смогли отредактировать (например, сообщение удалено) —
-            # шлём игровое поле отдельным сообщением
-            await _business_send_message_ex(
-                conn_id, msg.chat.id,
-                _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}",
-                reply_markup=_knb_move_kb(),
-                parse_mode="HTML",
-            )
-        if was_restart:
-            await _business_send_message_ex(
-                conn_id, msg.chat.id,
-                "⚔️ <b>Предыдущая игра закрыта</b> — начинаем новую! 🥊",
-            )
+            knb_games.pop(key, None)  # не смогли отправить поле — не держим игру
+            log.warning(f"⚔️ .knb send board failed conn={conn_id} chat={msg.chat.id}")
+            return
+        await _knb_delete_command(msg, conn_id)
         log.info(f"⚔️ .knb start conn={conn_id} chat={msg.chat.id} first={game['turn']}")
         return
+
     if chat_type not in ("group", "supergroup"):
         return
     # ── Группа через Business: вызов .knb @user ──
@@ -218,14 +251,12 @@ async def on_knb_start(msg: Message):
     _knb_cache_member(msg.chat.id, msg.from_user)
     _knb_forget_stale()
     key = ("bg", conn_id, msg.chat.id)
-    # Старая незавершённая игра в группе автоматически закрывается —
-    # новый вызов .knb начинается сразу
     if key in knb_games:
         knb_games.pop(key, None)
     target = await _knb_resolve_target(msg)
     if target is None:
-        await _business_edit_message(
-            conn_id, msg.chat.id, msg.message_id,
+        await _business_send_message_ex(
+            conn_id, msg.chat.id,
             "⚔️ <b>Не нашёл, кого ты вызываешь.</b>\n"
             f"<code>{LINE}</code>\n\n"
             "◇ Напиши так: <code>.knb @username</code>\n"
@@ -233,9 +264,7 @@ async def on_knb_start(msg: Message):
         )
         return
     if target["id"] == msg.from_user.id:
-        await _business_edit_message(
-            conn_id, msg.chat.id, msg.message_id, "⚔️ Нельзя бросить вызов самому себе 😅"
-        )
+        await _business_send_message_ex(conn_id, msg.chat.id, "⚔️ Нельзя бросить вызов самому себе 😅")
         return
     game = {
         "mode": "group",
@@ -254,14 +283,25 @@ async def on_knb_start(msg: Message):
         "ts": time.monotonic(),
     }
     knb_games[key] = game
-    game["msg_id"] = msg.message_id
-    await _business_edit_message(
-        conn_id, msg.chat.id, msg.message_id,
-        _knb_challenge_text(game),
-        reply_markup=_knb_challenge_kb(),
+    ok, retry_after, _ = await _business_send_message_ex(
+        conn_id, msg.chat.id, _knb_challenge_text(game),
+        reply_markup=_knb_challenge_kb(), parse_mode="HTML",
     )
+    if not ok and retry_after:
+        await asyncio.sleep(int(retry_after))
+        ok, _, _ = await _business_send_message_ex(
+            conn_id, msg.chat.id, _knb_challenge_text(game),
+            reply_markup=_knb_challenge_kb(), parse_mode="HTML",
+        )
+    if not ok:
+        knb_games.pop(key, None)
+        log.warning(f"⚔️ .knb challenge send failed conn={conn_id} chat={msg.chat.id}")
+        return
+    await _knb_delete_command(msg, conn_id)
     log.info(f"⚔️ .knb challenge bg conn={conn_id} chat={msg.chat.id} by={msg.from_user.id} target={target['id']}")
 
+
+# ── Вызов в группе (обычный бот) ─────────────────────────────────────
 @dp.message(F.text.regexp(r"(?i)^\.knb(\s+.*)?$"), F.chat.type.in_(("group", "supergroup")))
 async def on_knb_challenge(msg: Message):
     """Группа (обычный бот): .knb @user — вызов на бой 1×1, все видят."""
@@ -274,8 +314,6 @@ async def on_knb_challenge(msg: Message):
     await db.add_bot_chat(chat_id, msg.chat.title or "", msg.chat.type)
     _knb_forget_stale()
     key = ("group", chat_id)
-    # Старая незавершённая игра в группе автоматически закрывается —
-    # новый вызов .knb начинается сразу
     if key in knb_games:
         knb_games.pop(key, None)
     target = await _knb_resolve_target(msg)
@@ -307,21 +345,24 @@ async def on_knb_challenge(msg: Message):
         "ts": time.monotonic(),
     }
     knb_games[key] = game
+    await _knb_delete_command(msg, None)
     try:
-        sent = await msg.reply(
-            _knb_challenge_text(game),
-            reply_markup=_knb_challenge_kb(),
+        sent = await bot.send_message(
+            chat_id, _knb_challenge_text(game),
+            reply_markup=_knb_challenge_kb(), parse_mode="HTML",
         )
     except Exception as e:
         knb_games.pop(key, None)
-        log.warning(f"knb challenge reply: {e}")
+        log.warning(f"knb challenge send: {e}")
         return
     game["msg_id"] = sent.message_id
     log.info(f"⚔️ .knb challenge group={chat_id} by={uid} target={target['id']}")
 
+
+# ── Принять бой ───────────────────────────────────────────────────────
 @dp.callback_query(F.data == "knb_accept")
 async def cb_knb_accept(call: CallbackQuery):
-    key = _knb_game_key_from_call(call)
+    key = _knb_key_from_call(call)
     if not key or not call.message:
         await call.answer("⛔ Вызов недоступен", show_alert=True)
         return
@@ -351,9 +392,11 @@ async def cb_knb_accept(call: CallbackQuery):
         _knb_move_kb(),
     )
 
+
+# ── Ход ───────────────────────────────────────────────────────────────
 @dp.callback_query(F.data.in_({"knb_r", "knb_s", "knb_p"}))
 async def cb_knb_move(call: CallbackQuery):
-    key = _knb_game_key_from_call(call)
+    key = _knb_key_from_call(call)
     if not key or not call.message:
         await call.answer("⛔ Игра недоступна", show_alert=True)
         return
@@ -405,9 +448,11 @@ async def cb_knb_move(call: CallbackQuery):
     )
     await call.answer("🤫 Ход записан", show_alert=False)
 
+
+# ── Реванш ────────────────────────────────────────────────────────────
 @dp.callback_query(F.data == "knb_again")
 async def cb_knb_again(call: CallbackQuery):
-    key = _knb_game_key_from_call(call)
+    key = _knb_key_from_call(call)
     if not key or not call.message:
         await call.answer("⛔ Игра недоступна", show_alert=True)
         return
@@ -431,9 +476,11 @@ async def cb_knb_again(call: CallbackQuery):
     )
     await call.answer("🔁 Новый раунд", show_alert=False)
 
+
+# ── Отмена / закрытие ─────────────────────────────────────────────────
 @dp.callback_query(F.data == "knb_cancel")
 async def cb_knb_cancel(call: CallbackQuery):
-    key = _knb_game_key_from_call(call)
+    key = _knb_key_from_call(call)
     if not key or not call.message:
         await call.answer("⛔ Игра недоступна", show_alert=True)
         return
