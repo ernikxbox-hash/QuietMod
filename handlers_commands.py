@@ -769,6 +769,153 @@ async def on_price_group(msg: Message):
     log.info(f"💰 .price group chat={msg.chat.id} target=@{target}")
 
 
+# ── .info (Business + группы) — карточка собеседника ────────────────────
+# Эвристика «ID → примерная дата регистрации». Официального API для даты
+# регистрации нет, поэтому используем известные опорные точки (TelegramStats):
+# ID растут со временем, и по диапазону можно грубо оценить год регистрации.
+# После перехода Telegram на компактные ID (с ~2023) точность падает —
+# поэтому всегда помечаем ответ как «примерно».
+_INFO_ID_ANCHORS: list[tuple[int, str]] = [
+    (15_000_000,   "2013"),   # первые пользователи (август 2013)
+    (60_000_000,   "2014"),
+    (150_000_000,  "2015"),
+    (300_000_000,  "2016"),
+    (500_000_000,  "2017"),
+    (700_000_000,  "2018"),
+    (900_000_000,  "2019"),
+    (1_100_000_000, "2020"),
+    (1_300_000_000, "2021"),
+    (1_500_000_000, "2022"),
+    (1_700_000_000, "2023"),
+    (2_000_000_000, "2024"),
+]
+
+
+def _info_reg_year(uid: int) -> Optional[str]:
+    """Грубая оценка года регистрации по ID (эвристика)."""
+    if not uid or uid <= 0:
+        return None
+    for threshold, year in _INFO_ID_ANCHORS:
+        if uid < threshold:
+            return year
+    return "2025+"  # очень новые аккаунты (компактные ID)
+
+
+async def _info_card(uid: int, full_name: str, username: str, bio: str = "") -> str:
+    """HTML-карточка собеседника для .info."""
+    name = html_escape(full_name or "Неизвестно")
+    uname = html_escape((username or "").lstrip("@"))
+    year = _info_reg_year(uid)
+    lines = [
+        "ℹ️ <b>ИНФО О СОБЕСЕДНИКЕ</b>",
+        f"<code>{LINE}</code>",
+        "",
+        f"◇ <b>Имя:</b> {name}",
+    ]
+    if uname:
+        lines.append(f"◇ <b>Username:</b> <a href=\"https://t.me/{uname}\">@{uname}</a>")
+    lines.append(f"◇ <b>ID:</b> <code>{uid}</code>")
+    if bio:
+        lines.append(f"◇ <b>Bio:</b> {html_escape(bio)}")
+    if year:
+        lines.append(
+            f"◇ <b>Регистрация:</b> примерно {year}\n"
+            "   <i>(оценка по ID — может отличаться)</i>"
+        )
+    lines += [
+        "",
+        f"<code>{LINE}</code>",
+        f"— 👁️ @{BOT_USERNAME}",
+    ]
+    return "\n".join(lines)
+
+
+async def _info_by_user_id(user_id: int) -> Optional[str]:
+    """Собирает карточку по user_id: имя/username из getChat, bio если доступно."""
+    try:
+        chat = await bot.get_chat(user_id)
+    except Exception as e:
+        log.warning(f"ℹ️ .info getChat uid={user_id}: {e}")
+        return None
+    full_name = getattr(chat, "full_name", None) or getattr(chat, "title", None) or ""
+    username = getattr(chat, "username", None) or ""
+    bio = getattr(chat, "bio", None) or ""
+    return await _info_card(user_id, full_name, username, bio)
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.info(\s+.+)?$"))
+async def on_info_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".info")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    raw_text = (msg.text or "").strip()
+    body = raw_text[5:].strip() if len(raw_text) >= 5 else ""
+    target = body.lstrip("@").strip()
+    # В ЛС с ботом (business private) показываем собеседника
+    if not target and msg.from_user:
+        if getattr(msg.chat, "type", None) == "private" and msg.chat.id != owner_id:
+            target = str(msg.chat.id)
+    if not target:
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            "◇ <b>.info</b> — показываю карточку собеседника.\n◇ Укажи явно: <code>.info @username</code> или <code>.info id</code>",
+        )
+        return
+    if target.isdigit():
+        user_id = int(target)
+        card = await _info_by_user_id(user_id)
+    else:
+        # по username: getChat умеет резолвить @username → id
+        card = await _info_by_user_id(target)
+    if card is None:
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            "◇ <b>.info</b> — не удалось получить данные.\n◇ Проверь: <code>.info @username</code> или <code>.info id</code>",
+        )
+        return
+    await _business_edit_ai_html(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        prefix="", answer=card,
+    )
+    log.info(f"ℹ️ .info business owner={owner_id} target={target}")
+
+
+@dp.message(F.text.regexp(r"(?i)^\.info(\s+.+)?$"), F.chat.type.in_({"group", "supergroup", "channel"}))
+async def on_info_group(msg: Message):
+    if not msg.from_user:
+        return
+    raw_text = msg.text or ""
+    body = raw_text[5:].strip() if len(raw_text) >= 5 else ""
+    target = body.lstrip("@").strip()
+    if not target and msg.reply_to_message and msg.reply_to_message.from_user:
+        target = str(msg.reply_to_message.from_user.id)
+    if not target:
+        await msg.reply(
+            "◇ <b>.info</b> — укажи собеседника:\n"
+            "   · <code>.info @username</code>\n"
+            "   · <code>.info id</code>\n"
+            "   · ответь на сообщение: <code>.info</code>"
+        )
+        return
+    await db.upsert_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name or "")
+    await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
+    if target.isdigit():
+        card = await _info_by_user_id(int(target))
+    else:
+        card = await _info_by_user_id(target)
+    if card is None:
+        await msg.reply(
+            "◇ <b>.info</b> — не удалось получить данные.\n◇ Проверь: <code>.info @username</code> или <code>.info id</code>"
+        )
+        return
+    await _reply_ai_html(msg, prefix="", answer=card)
+    log.info(f"ℹ️ .info group chat={msg.chat.id} target={target}")
+
+
 # ── .curs (Business + группы/ЛС) ───────────────────────────────────────
 _CURS_KBD = {
     "inline_keyboard": [

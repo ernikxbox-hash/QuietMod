@@ -487,6 +487,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".price @alimtona",
         "note": "В бизнес-чате без аргумента — оценит собеседника"
     },
+    "info": {
+        "title": "ℹ️ .info",
+        "desc": "Показывает всё о собеседнике: имя, username, ID, bio и примерную дату регистрации в Telegram.",
+        "usage": ".info · .info @username · .info id",
+        "example": ".info · .info @friend",
+        "note": "В ЛС с ботом (Business) показывает собеседника · в группе — ответь на сообщение или укажи @username"
+    },
     "curs": {
         "title": "💱 .curs",
         "desc": "Курс популярных валют к рублю — официальные курсы ЦБ РФ, одним сообщением.",
@@ -553,7 +560,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "curs", "knb",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
