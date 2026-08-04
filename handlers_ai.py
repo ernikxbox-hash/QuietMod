@@ -14,6 +14,7 @@ from functions import LINE, _get_image_base64, _reply_ai_html, _send_code_files,
 async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     uid = call.from_user.id
     AI_ACTIVE_USERS.add(uid)
+    await db.activate_ai_session(uid)
     await state.set_state(S.ai_chat)
     await call.answer()
     await call.message.edit_text(
@@ -29,12 +30,12 @@ THINKING_INTERVAL = 0.4
 AI_ACTIVE_USERS: set[int] = set()
 
 
-def _should_handle_ai_message(current_state, uid: int, ai_active_ids: set[int]) -> bool:
+async def _should_handle_ai_message(current_state, uid: int, ai_active_ids: set[int]) -> bool:
     if uid in ai_active_ids:
         return True
     if current_state in {S.ai_chat, "ai_chat", getattr(S.ai_chat, "state", None)}:
         return True
-    return False
+    return await db.is_ai_session_active(uid)
 
 
 async def _spin_thinking(chat_id: int, message_id: int):
@@ -55,7 +56,9 @@ async def _spin_thinking(chat_id: int, message_id: int):
 async def ai_msg(msg: Message, state: FSMContext):
     uid = msg.from_user.id
     current_state = await state.get_state()
-    if not _should_handle_ai_message(current_state, uid, AI_ACTIVE_USERS):
+    should_handle = await _should_handle_ai_message(current_state, uid, AI_ACTIVE_USERS)
+    log.debug(f"ai_msg enter uid={uid} state={current_state} active={should_handle} photo={bool(msg.photo)}")
+    if not should_handle:
         return
     has_photo = bool(msg.photo)
     has_text  = bool(msg.text or msg.caption)
@@ -79,6 +82,10 @@ async def ai_msg(msg: Message, state: FSMContext):
             return
     try:
         reply, files = await groq_chat(uid, text_content, image_base64=image_b64)
+    except Exception as e:
+        log.exception(f"AI handler failed for uid={uid}")
+        reply = "◇ Ошибка ИИ. Попробуй ещё раз через минуту."
+        files = []
     finally:
         spin_task.cancel()
     await thinking.delete()
@@ -96,6 +103,7 @@ async def cb_ai_exit(call: CallbackQuery, state: FSMContext):
     await state.clear()
     uid = call.from_user.id
     AI_ACTIVE_USERS.discard(uid)
+    await db.deactivate_ai_session(uid)
     await call.answer()
     await call.message.edit_text(
         home_text(),
