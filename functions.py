@@ -509,7 +509,9 @@ def kb_admin() -> InlineKeyboardMarkup:
     ])
 SYSTEM_PROMPT = (
     "Ты сдержанный, элегантный ИИ-консьерж внутри Telegram-бота Quiet Mod. "
-    "Отвечай чётко, без лишней воды. Язык — язык пользователя. "
+    "Отвечай чётко, без лишней воды. Всегда давай короткий и полезный ответ. "
+    "Если вопрос простой — отвечай кратко и по делу. Если вопрос сложный — дай плотный, но не раздутый ответ. "
+    "Язык — язык пользователя. "
     "СТРОГО: весь ответ должен быть на ОДНОМ языке — языке вопроса пользователя. "
     "Никогда не вставляй слова или фразы на других языков (вьетнамский, китайский и т.п.), "
     "даже одно слово — это критическая ошибка.\n\n"
@@ -1241,6 +1243,38 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
             await db.record_stat(f"groq_key{idx + 1}_fail", "error")
     log.error(f"Groq: все {n} API-ключей не сработали (model={model})")
     return None
+def _choose_ai_budget(user_msg: str) -> tuple[int, float]:
+    """Выбираем бюджет токенов под задачу: обычные запросы — дешево, код/файлы — шире."""
+    t = (user_msg or "").lower()
+    is_heavy = any(k in t for k in (
+        "код", "скрипт", "python", "javascript", "typescript", "html", "css", "json",
+        "бот", "api", "файл", "презентац", "доклад", "много", "полностью",
+        "сделай", "напиши", "создай", "структур"
+    ))
+    if is_heavy:
+        return 1800, 0.7
+    if any(k in t for k in ("сравни", "объясни", "почему", "помоги", "план", "стратег", "разбери", "структур")):
+        return 1100, 0.8
+    return 700, 0.95
+
+
+def _compress_history_for_budget(history: list[dict]) -> list[dict]:
+    """Сжимаем историю до самых полезных обменов, чтобы не тратить лишние токены."""
+    if not history:
+        return []
+    compact: list[dict] = []
+    for item in history[-6:]:
+        content = item.get("content")
+        if isinstance(content, str):
+            text = content.strip()
+            if len(text) > 500:
+                text = text[:450] + "…"
+            compact.append({"role": item.get("role", "user"), "content": text})
+        else:
+            compact.append({"role": item.get("role", "user"), "content": str(content)[:500]})
+    return compact
+
+
 def _normalize_code_blocks(text: str) -> str:
     text = re.sub(
         r"```(?:\w+)?\n?(.*?)```",
@@ -1440,6 +1474,8 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
     if len(history) > 10:
         ai_history[uid] = history[-10:]
         history = ai_history[uid]
+    budget_tokens, temperature = _choose_ai_budget(user_msg)
+    history = _compress_history_for_budget(history)
     active_model = GROQ_MODEL if image_base64 else GROQ_MODEL_TEXT
     already_searched = False
     if not image_base64 and _is_weather_query(user_msg):
@@ -1491,8 +1527,8 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                 )
             messages = messages + [{"role": "user", "content": search_instr}]
             already_searched = True
-    max_tokens = 8192 if _wants_file(user_msg) else 2048
-    reply = await _groq_request(messages, max_tokens=max_tokens, model=active_model)
+    max_tokens = 1800 if _wants_file(user_msg) else budget_tokens
+    reply = await _groq_request(messages, max_tokens=max_tokens, temperature=temperature, model=active_model)
     if reply is None:
         return (
             "◆ <b>ИИ недоступен</b> — вероятно, исчерпан бесплатный лимит токенов на сегодня.\n\n"
@@ -1525,7 +1561,7 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                     )
                 }
             ]
-            reply_with_search = await _groq_request(augmented_messages, max_tokens=max_tokens, model=active_model)
+            reply_with_search = await _groq_request(augmented_messages, max_tokens=max_tokens, temperature=temperature, model=active_model)
             if reply_with_search:
                 reply_with_search, extra_files = _parse_code_files(reply_with_search)
                 files += extra_files
@@ -1551,7 +1587,7 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                     )
                 },
             ]
-            v_reply = await _groq_request(v_messages, max_tokens=max_tokens, model=active_model)
+            v_reply = await _groq_request(v_messages, max_tokens=max_tokens, temperature=temperature, model=active_model)
             if v_reply:
                 v_reply, extra_files = _parse_code_files(v_reply)
                 files += extra_files

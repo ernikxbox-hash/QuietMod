@@ -16,7 +16,7 @@ async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await call.message.edit_text(
         f"◆ <b>ИИ-консьерж</b>\n{LINE}\n"
-        f"Модель: <b>Llama 4 Maverick · Vision</b>\n"
+        f"Модель: <b>Llama 3.2 90B Vision</b>\n"
         f"Лимит: <b>без ограничений</b>\n\n"
         "Спрашивай что угодно — отвечу тихо и быстро ◆",
         reply_markup=kb_ai(),
@@ -48,6 +48,8 @@ async def ai_msg(msg: Message, state: FSMContext):
         await msg.answer("◇ Отправь текст или фото (можно с подписью).")
         return
     text_content = msg.text or msg.caption or ""
+    if has_photo and not text_content.strip():
+        text_content = "Опиши что на фото и ответь кратко и по делу."
     thinking = await msg.answer(THINKING_FRAMES[0])
     spin_task = asyncio.create_task(_spin_thinking(thinking.chat.id, thinking.message_id))
     image_b64 = None
