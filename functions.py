@@ -1,6 +1,6 @@
 import asyncio
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta, timezone
 from typing import Optional
 import aiohttp
 from ddgs import DDGS
@@ -813,6 +813,23 @@ async def _get_currency_rate(query: str) -> Optional[str]:
         target = next((c for c in fiat if c != base), "RUB")
         if base == target:
             return None
+        # Рублёвые пары — берём из общего кэша (Мосбиржа/ЦБ РФ), чтобы курс
+        # в .ai совпадал с .curs и был «реальным», а не офшорным из er-api
+        if base == "RUB" or target == "RUB":
+            _, ru_rates = await _get_curs_cached()
+            if ru_rates and ru_rates.get(target if base == "RUB" else base):
+                try:
+                    rate = ru_rates[base] if target == "RUB" else 1.0 / ru_rates[target]
+                except ZeroDivisionError:
+                    rate = None
+                if rate:
+                    base_name = _CURRENCY_NAMES.get(base, base)
+                    target_name = _CURRENCY_NAMES.get(target, target)
+                    return (
+                        f"💱 <b>{base_name} → {target_name}</b>\n"
+                        f"1 {base} = <b>{_fmt_rate(float(rate))} {target}</b>\n\n"
+                        f"◐ <i>актуальный курс</i>"
+                    )
         async with session.get(
             f"https://open.er-api.com/v6/latest/{base}",
             timeout=aiohttp.ClientTimeout(total=10),
@@ -857,37 +874,89 @@ def _fmt_curs_rate(value: float) -> str:
     """Формат курса для .curs: 92,34 · 1 235 · 0,1923 (запятая как разделитель)"""
     return _fmt_rate(value).replace(".", ",")
 
+# Живые пары Московской биржи (реальное время). Значение — ₽ за 1 ед.
+# Проверяем каждый курс сверкой с ЦБ (разумный диапазон), чтобы отсечь
+# контракты с другим номиналом (KZT/JPY — за 100) и неликвидный мусор.
+_MOEX_CANDIDATES: dict[str, list[str]] = {
+    "USD": ["USD000UTSTOM", "USDRUB_TOM", "USD000TODTOM"],
+    "EUR": ["EURRUB_TOM", "EUR_RUB__TOM", "EUR000TODTOM"],
+    "GBP": ["GBPRUB_TOM", "GBPRUB_TOD"],
+    "CNY": ["CNYRUB_TOM", "CNY000000TOD"],
+    "CHF": ["CHFRUB_TOM", "CHFRUB_TOD"],
+    "TRY": ["TRYRUB_TOM", "TRYRUB_TOD"],
+    "BYN": ["BYNRUB_TOM", "BYNRUB_TOD"],
+}
+
+
+async def _fetch_moex_rates() -> dict[str, float]:
+    """Реальное время с Московской биржи: {код: ₽ за 1 ед.} для ликвидных пар."""
+    try:
+        session = get_http()
+        url = "https://iss.moex.com/iss/engines/currency/markets/selt/boards/CETS/securities.json"
+        params = {
+            "iss.meta": "off",
+            "iss.only": "marketdata",
+            "marketdata.columns": "SECID,LAST",
+            "limit": 500,
+        }
+        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                log.warning(f"MOEX ISS status: {resp.status}")
+                return {}
+            data = await resp.json()
+        md = data.get("marketdata") or {}
+        cols = md.get("columns") or []
+        rows = md.get("data") or []
+        if "SECID" not in cols or "LAST" not in cols:
+            return {}
+        i_sec = cols.index("SECID")
+        i_last = cols.index("LAST")
+        last_by_sec: dict[str, float] = {}
+        for row in rows:
+            sec = row[i_sec] if i_sec < len(row) else None
+            val = row[i_last] if i_last < len(row) else None
+            if sec and isinstance(val, (int, float)) and 0.01 <= val <= 1_000_000:
+                last_by_sec[str(sec)] = float(val)
+        out: dict[str, float] = {}
+        for code, secs in _MOEX_CANDIDATES.items():
+            for s in secs:
+                v = last_by_sec.get(s)
+                if v:
+                    out[code] = v
+                    break
+        return out
+    except Exception as e:
+        log.warning(f"MOEX ISS error: {e}")
+        return {}
+
+
 async def _fetch_cbr_rates() -> Optional[tuple[str, dict[str, float]]]:
-    """Официальные курсы ЦБ РФ (точный источник для рубля): (дата, курс за 1 ед.)."""
+    """Официальные курсы ЦБ РФ (cbr.ru, официальный источник): (дата, курс за 1 ед.)."""
     try:
         session = get_http()
         async with session.get(
-            "https://www.cbr-xml-daily.ru/daily_json.js",
+            "https://www.cbr.ru/scripts/XML_daily.asp",
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
-                log.warning(f"CBR API status: {resp.status}")
+                log.warning(f"CBR status: {resp.status}")
                 return None
-            data = await resp.json()
-        valute = data.get("Valute") or {}
-        if not valute:
-            return None
-        date_str = date.today().strftime("%d.%m.%Y")
-        try:
-            date_str = datetime.fromisoformat(data["Date"]).strftime("%d.%m.%Y")
-        except Exception:
-            pass
+            xml_text = await resp.text()
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(xml_text)
+        date_str = root.get("Date") or date.today().strftime("%d.%m.%Y")
+        needed = {c for c, _, _ in _POPULAR_CURS}
         rates: dict[str, float] = {}
-        for code, _, _ in _POPULAR_CURS:
-            item = valute.get(code)
-            if not item:
+        for val in root.iter("Valute"):
+            code = (val.findtext("CharCode") or "").strip()
+            if code not in needed:
                 continue
             try:
-                value = float(item["Value"])
-                nominal = float(item.get("Nominal") or 1)
-            except (TypeError, ValueError, KeyError, ZeroDivisionError):
+                nominal = float((val.findtext("Nominal") or "1").replace(",", "."))
+                value = float((val.findtext("Value") or "").replace(",", "."))
+            except (TypeError, ValueError):
                 continue
-            if nominal <= 0 or value < 0:
+            if nominal <= 0 or value <= 0:
                 continue
             rates[code] = value / nominal
         return (date_str, rates) if rates else None
@@ -949,27 +1018,41 @@ def _render_curs_text(rates: dict[str, float], source: str, date_str: str) -> Op
 
 
 async def _refresh_curs_cache() -> bool:
-    """Обновляет кэш курсов: сначала ЦБ РФ, недостающие — er-api, фолбэк целиком на er-api."""
+    """Обновляет кэш курсов: Мосбиржа (реальное время) → официальный ЦБ → er-api только для недостающих.
+
+    Основные пары берём с Мосбиржи, но только если значение правдоподобно
+    (в разумном диапазоне от курса ЦБ) — иначе берём официальный курс ЦБ.
+    """
     source = "актуальный курс"
     date_str = date.today().strftime("%d.%m.%Y")
-    rates: dict[str, float] = {}
     cbr = await _fetch_cbr_rates()
+    moex = await _fetch_moex_rates()
     if cbr:
-        date_str, cbr_rates = cbr
-        rates.update(cbr_rates)
+        date_str, rates = cbr
+        rates = dict(rates)
         source = "официальный курс ЦБ РФ"
-        missing = [c for c, _, _ in _POPULAR_CURS if c not in rates]
-        if missing:
-            er = await _fetch_erapi_rates()
-            if er:
-                for c in missing:
-                    if c in er:
-                        rates[c] = er[c]
-                source += " · часть валют — er-api"
+        used_moex = []
+        for code, rub in moex.items():
+            base = rates.get(code)
+            if base and base > 0 and 0.9 <= rub / base <= 1.1:
+                rates[code] = rub
+                used_moex.append(code)
+        if used_moex:
+            source = "Мосбиржа · реальный рынок"
+            if len(used_moex) < len(_POPULAR_CURS):
+                source = "Мосбиржа + ЦБ РФ"
     else:
+        # ЦБ недоступен — берём Мосбиржу для основных пар (все они за 1 ед.)
+        rates = dict(moex)
+        source = "Мосбиржа · реальный рынок"
+    missing = [c for c, _, _ in _POPULAR_CURS if c not in rates]
+    if missing:
         er = await _fetch_erapi_rates()
         if er:
-            rates.update(er)
+            for c in missing:
+                if c in er:
+                    rates[c] = er[c]
+            source += " · часть валют — er-api"
     if not rates:
         return False
     text = _render_curs_text(rates, source, date_str)
