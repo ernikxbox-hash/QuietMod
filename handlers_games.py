@@ -10,7 +10,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from html import escape as html_escape
 
 import database as db
-from business_api import _business_edit_message, _get_owner_id_cached
+from business_api import (
+    _business_edit_message,
+    _business_send_message_ex,
+    _get_owner_id_cached,
+)
 from core import bot, dp, log
 from functions import LINE, knb_games
 
@@ -158,15 +162,11 @@ async def on_knb_start(msg: Message):
             return
         _knb_forget_stale()
         key = ("dm", conn_id, msg.chat.id)
-        # Старая незавершённая игра в этом чате автоматически закрывается,
-        # чтобы можно было начать новую сразу (кнопкой «✕ Отменить» её не
-        # обязательно жать — .knb начинает бой заново)
-        if key in knb_games:
+        # Старая незавершённая игра в этом чате автоматически закрывается —
+        # новая начинается сразу (сообщение .knb превращается в игровое поле).
+        was_restart = key in knb_games
+        if was_restart:
             knb_games.pop(key, None)
-            await _business_edit_message(
-                conn_id, msg.chat.id, msg.message_id,
-                "⚔️ <b>Предыдущая игра закрыта</b> — начинаем новую! 🥊",
-            )
         game = {
             "mode": "dm",
             "chat_id": msg.chat.id,
@@ -188,11 +188,26 @@ async def on_knb_start(msg: Message):
         }
         knb_games[key] = game
         first_name = game["a_name"] if game["turn"] == "a" else game["b_name"]
-        await _business_edit_message(
+        # Игровое поле — прямо в сообщение .knb (одна правка, надёжно)
+        ok = await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
             _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}",
             reply_markup=_knb_move_kb(),
         )
+        if not ok:
+            # Не смогли отредактировать (например, сообщение удалено) —
+            # шлём игровое поле отдельным сообщением
+            await _business_send_message_ex(
+                conn_id, msg.chat.id,
+                _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}",
+                reply_markup=_knb_move_kb(),
+                parse_mode="HTML",
+            )
+        if was_restart:
+            await _business_send_message_ex(
+                conn_id, msg.chat.id,
+                "⚔️ <b>Предыдущая игра закрыта</b> — начинаем новую! 🥊",
+            )
         log.info(f"⚔️ .knb start conn={conn_id} chat={msg.chat.id} first={game['turn']}")
         return
     if chat_type not in ("group", "supergroup"):
