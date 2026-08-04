@@ -35,7 +35,7 @@ async def main():
         await bot.send_message(
             ADMIN_ID,
             f"✔ <b>Бот запущен</b> · Quiet Mod 👁️ · SQLite · Railway\n"
-            f"◇ Модель: Llama 4 Maverick (Vision)"
+            f"◇ Модель: Llama 3.3 70B"
         )
     except Exception:
         pass
