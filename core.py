@@ -20,7 +20,6 @@ BOT_USERNAME = "Quiet_Mod_Bot"
 # Распознавание фото ОТКЛЮЧЕНО: llama-4-maverick (09.03.26), llama-4-scout (17.07.26)
 # и qwen-vision задепрекейчены — бот работает только на текстовой модели.
 GROQ_MODEL = "openai/gpt-oss-120b"
-GROQ_MODEL_TEXT = GROQ_MODEL
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",

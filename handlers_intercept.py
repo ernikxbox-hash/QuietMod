@@ -41,6 +41,16 @@ from functions import (
 from handlers_games import _knb_cache_member
 
 
+def _extract_media(msg: Message) -> tuple[str, Optional[str]]:
+    """Первый медиа-объект сообщения: (подпись из MEDIA_MAP, file_id)."""
+    for attr, label in MEDIA_MAP.items():
+        obj = getattr(msg, attr, None)
+        if obj:
+            file_id = obj[-1].file_id if attr == "photo" else (getattr(obj, "file_id", None))
+            return label, file_id
+    return "◆ Текст", None
+
+
 @dp.business_message()
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
@@ -121,14 +131,7 @@ async def on_business_msg(msg: Message):
                 ok, _, _ = await _business_send_message_ex(msg.business_connection_id, msg.chat.id, reply_text)
             if ok:
                 business_afk_last_reply[(msg.business_connection_id, msg.chat.id)] = now_mono
-    media_type = "◆ Текст"
-    file_id: Optional[str] = None
-    for attr, label in MEDIA_MAP.items():
-        obj = getattr(msg, attr, None)
-        if obj:
-            media_type = label
-            file_id = obj[-1].file_id if attr == "photo" else (getattr(obj, "file_id", None))
-            break
+    media_type, file_id = _extract_media(msg)
     await db.save_message(owner_id, {
         "msg_id":     msg.message_id,
         "sender_id":  msg.from_user.id if msg.from_user else None,
@@ -190,14 +193,7 @@ async def on_edited_business_msg(msg: Message):
         })
         await db.record_stat("caught_edited")
         await _send_notify(owner_id, notify, reply_markup=kb_notify(save_id))
-    media_type = "◆ Текст"
-    file_id: Optional[str] = None
-    for attr, label in MEDIA_MAP.items():
-        obj = getattr(msg, attr, None)
-        if obj:
-            media_type = label
-            file_id = obj[-1].file_id if attr == "photo" else (getattr(obj, "file_id", None))
-            break
+    media_type, file_id = _extract_media(msg)
     await db.save_message(owner_id, {
         "msg_id":     msg.message_id,
         "sender_id":  msg.from_user.id if msg.from_user else None,

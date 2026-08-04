@@ -10,9 +10,7 @@ _conn: Optional[aiosqlite.Connection] = None
 _write_lock = asyncio.Lock()
 _msg_write_queue: Optional[asyncio.Queue] = None
 _msg_writer_task: Optional[asyncio.Task] = None
-_owner_limit_cache: dict[int, tuple[int, float]] = {}
 _owner_cleanup_counter: dict[int, int] = {}
-_OWNER_LIMIT_TTL_SECONDS = 5 * 60
 _MSG_BATCH_MAX = 60
 _MSG_BATCH_WAIT_SECONDS = 0.25
 _OWNER_CLEANUP_EVERY = 25
@@ -227,13 +225,8 @@ async def get_all_users(limit: int = 50, offset: int = 0) -> list[dict]:
 FREE_CACHE_LIMIT = 100_000  # лимиты архива убраны — практически безлимит для всех
 
 async def _get_owner_limit(owner_id: int) -> int:
-    now = asyncio.get_running_loop().time()
-    cached = _owner_limit_cache.get(owner_id)
-    if cached and cached[1] > now:
-        return cached[0]
-    limit = FREE_CACHE_LIMIT  # архив безлимитен для всех
-    _owner_limit_cache[owner_id] = (limit, now + _OWNER_LIMIT_TTL_SECONDS)
-    return limit
+    # Архив безлимитен для всех — лимит постоянный, кэшировать нечего.
+    return FREE_CACHE_LIMIT
 
 async def _msg_writer_loop():
     while True:

@@ -120,30 +120,41 @@ async def cb_adm_stats(call: CallbackQuery):
     today = _stat_since(0)
     week  = _stat_since(6)
     month = _stat_since(29)
-    async def _cnt(ev: str, since: str) -> int:
-        return await db.count_stats(ev, since)
-    launches = (
-        await _cnt("launch", today),
-        await _cnt("launch", week),
-        await _cnt("launch", month),
-        await db.count_stats("launch"),
+    n_keys = len(GROQ_API_KEYS)
+    # Все запросы статистики — параллельно (gather): раньше 11+ последовательных
+    # запросов к БД держали админку ~1 сек, теперь всё летит разом.
+    results = await asyncio.gather(
+        db.count_stats("launch", today),
+        db.count_stats("launch", week),
+        db.count_stats("launch", month),
+        db.count_stats("launch"),
+        db.count_users(),
+        db.total_messages_all(),
+        db.total_stars(),
+        db.count_ideas(),
+        db.count_stats("caught_deleted"),
+        db.count_stats("caught_edited"),
+        db.count_stats("whisper_ok"),
+        *[db.count_stats(f"groq_key{i}_ok") for i in range(1, n_keys + 1)],
+        *[db.count_stats(f"groq_key{i}_ok", today) for i in range(1, n_keys + 1)],
+        *[db.count_stats(f"groq_key{i}_fail") for i in range(1, n_keys + 1)],
     )
-    users = await db.count_users()
-    msgs  = await db.total_messages_all()
-    stars = await db.total_stars()
-    ideas = await db.count_ideas()
-    del_caught = await db.count_stats("caught_deleted")
-    ed_caught  = await db.count_stats("caught_edited")
-    whisper    = await db.count_stats("whisper_ok")
+    (l_today, l_week, l_month, l_all,
+     users, msgs, stars, ideas,
+     del_caught, ed_caught, whisper) = results[:11]
+    key_ok_a   = results[11:11 + n_keys]
+    key_ok_t   = results[11 + n_keys:11 + 2 * n_keys]
+    key_fail_a = results[11 + 2 * n_keys:11 + 3 * n_keys]
+    launches = (l_today, l_week, l_month, l_all)
     key_lines = []
     ok_total = 0
-    for i, _k in enumerate(GROQ_API_KEYS, start=1):
-        ok_a   = await db.count_stats(f"groq_key{i}_ok")
-        ok_t   = await _cnt(f"groq_key{i}_ok", today)
-        fail_a = await db.count_stats(f"groq_key{i}_fail")
+    for i in range(n_keys):
+        ok_a   = key_ok_a[i]
+        ok_t   = key_ok_t[i]
+        fail_a = key_fail_a[i]
         ok_total += ok_a
         key_lines.append(
-            f"   🔑 Ключ {i}: <b>{ok_a}</b> ok (сегодня {ok_t}) · ошибок <b>{fail_a}</b>"
+            f"   🔑 Ключ {i + 1}: <b>{ok_a}</b> ok (сегодня {ok_t}) · ошибок <b>{fail_a}</b>"
         )
     if not key_lines:
         key_lines = ["   — ключи не настроены —"]
