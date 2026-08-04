@@ -477,6 +477,46 @@ async def cb_cmd_close(call: CallbackQuery):
         pass
 
 
+@dp.message(F.text.regexp(r"(?i)^\.emoji(\s+\S+)?$"), F.chat.type == "private")
+async def on_emoji_cmd(msg: Message):
+    """Админ: список кастомных эмодзи пака с их custom_emoji_id (.emoji <pack>).
+
+    Пример: .emoji CPT_Emoji — бот покажет все эмодзи пака, у каждого
+    кастомного эмодзи есть цифровой custom_emoji_id. Его можно ставить
+    на кнопки (icon_custom_emoji_id) и в текст сообщений.
+    """
+    if not msg.from_user or msg.from_user.id != ADMIN_ID:
+        return
+    body = msg.text.strip().split(maxsplit=1)
+    if len(body) < 2:
+        await msg.answer("◇ Формат: <code>.emoji имя_пака</code>\n◇ Пример: <code>.emoji CPT_Emoji</code>")
+        return
+    pack = body[1].strip().lstrip("@")
+    try:
+        sticker_set = await bot.get_sticker_set(pack)
+    except Exception as e:
+        log.info(f"👁 .emoji pack not found: {pack} ({e})")
+        await msg.answer(
+            f"◇ <b>Не нашёл пак</b> «{html_escape(pack)}».\n"
+            "◇ Проверь имя: <code>.emoji CPT_Emoji</code>\n"
+            "   (без t.me/addemoji/)"
+        )
+        return
+    lines = []
+    for s in sticker_set.stickers:
+        eid = s.custom_emoji_id or ""
+        lines.append(f"{s.emoji or '❔'} → <code>{eid}</code>")
+    text = (
+        f"👁 <b>Пак {html_escape(sticker_set.name)}</b> · {len(sticker_set.stickers)} эмодзи\n"
+        f"{LINE}\n\n"
+        + "\n".join(lines)
+    )
+    if len(text) > 4000:
+        text = text[:3970] + "\n…"
+    await msg.answer(text)
+    log.info(f"👁 .emoji pack={pack} count={len(sticker_set.stickers)}")
+
+
 @dp.message(S.broadcast_groups)
 async def on_broadcast_groups_input(msg: Message, state: FSMContext):
     if msg.from_user.id != ADMIN_ID:

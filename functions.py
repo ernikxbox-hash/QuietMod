@@ -313,13 +313,23 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
     except Exception as e:
         log.error(f"send notify to owner={owner_id}: {e}")
         return None
+# Кастомное эмодзи для кнопки «Профиль» (пак CPT_Emoji / @Cryptomus EMOJI).
+# Чтобы узнать ID: команда .emoji CPT_Emoji → выбрать эмодзи → пришли мне его
+# custom_emoji_id — я вставлю сюда. Пустая строка = без иконки (как сейчас).
+CUSTOM_EMOJI_PROFILE = ""
+
+
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
         rows.append([InlineKeyboardButton(text="▲ Admin Suite", callback_data="adm")])
     rows.append([
         InlineKeyboardButton(text="▣ Архив",        callback_data="show_all"),
-        InlineKeyboardButton(text="◆ Профиль",      callback_data="stats"),
+        InlineKeyboardButton(
+            text="◆ Профиль",
+            callback_data="stats",
+            icon_custom_emoji_id=CUSTOM_EMOJI_PROFILE or None,
+        ),
     ])
     rows.append([
         InlineKeyboardButton(text="◈ Сохранённые ➩", callback_data="show_saved"),
