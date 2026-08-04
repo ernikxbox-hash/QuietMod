@@ -325,12 +325,21 @@ CUSTOM_EMOJI_AI        = "5346024644635804737"  # ИИ-консьерж
 CUSTOM_EMOJI_REFERRALS = "5348348681504441752"  # Приглашения
 CUSTOM_EMOJI_SUGGEST   = "5348417723103722255"  # Предложить
 CUSTOM_EMOJI_ARCHIVE   = "5346267671065281783"  # Архив
+CUSTOM_EMOJI_SAVED     = "5348178055338671586"  # Сохранённые
+CUSTOM_EMOJI_CLEAR     = "5345809410939700735"  # Очистить
+CUSTOM_EMOJI_ADMIN     = "5348129380474306311"  # Admin Suite
 
 
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
-        rows.append([InlineKeyboardButton(text="Admin Suite", callback_data="adm")])
+        rows.append([
+            InlineKeyboardButton(
+                text="Admin Suite",
+                callback_data="adm",
+                icon_custom_emoji_id=CUSTOM_EMOJI_ADMIN or None,
+            )
+        ])
     rows.append([
         InlineKeyboardButton(
             text="Архив",
@@ -344,7 +353,11 @@ def kb_main(uid: int) -> InlineKeyboardMarkup:
         ),
     ])
     rows.append([
-        InlineKeyboardButton(text="Сохранённые", callback_data="show_saved"),
+        InlineKeyboardButton(
+            text="Сохранённые",
+            callback_data="show_saved",
+            icon_custom_emoji_id=CUSTOM_EMOJI_SAVED or None,
+        ),
     ])
     rows.append([
         InlineKeyboardButton(
@@ -366,7 +379,11 @@ def kb_main(uid: int) -> InlineKeyboardMarkup:
             callback_data="referrals",
             icon_custom_emoji_id=CUSTOM_EMOJI_REFERRALS or None,
         ),
-        InlineKeyboardButton(text="Очистить", callback_data="clear_cache"),
+        InlineKeyboardButton(
+            text="Очистить",
+            callback_data="clear_cache",
+            icon_custom_emoji_id=CUSTOM_EMOJI_CLEAR or None,
+        ),
     ])
     rows.append([
         InlineKeyboardButton(
