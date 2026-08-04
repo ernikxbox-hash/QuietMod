@@ -12,6 +12,8 @@ from functions import LINE, _get_image_base64, _reply_ai_html, _send_code_files,
 
 @dp.callback_query(F.data == "ai_open")
 async def cb_ai_open(call: CallbackQuery, state: FSMContext):
+    uid = call.from_user.id
+    AI_ACTIVE_USERS.add(uid)
     await state.set_state(S.ai_chat)
     await call.answer()
     await call.message.edit_text(
@@ -24,6 +26,16 @@ async def cb_ai_open(call: CallbackQuery, state: FSMContext):
 
 THINKING_FRAMES = ["◜ 👁️ Думаю", "◝ 👁️ Думаю", "◞ 👁️ Думаю", "◟ 👁️ Думаю"]
 THINKING_INTERVAL = 0.4
+AI_ACTIVE_USERS: set[int] = set()
+
+
+def _should_handle_ai_message(current_state, uid: int, ai_active_ids: set[int]) -> bool:
+    if uid in ai_active_ids:
+        return True
+    if current_state in {S.ai_chat, "ai_chat", getattr(S.ai_chat, "state", None)}:
+        return True
+    return False
+
 
 async def _spin_thinking(chat_id: int, message_id: int):
     i = 0
@@ -39,9 +51,12 @@ async def _spin_thinking(chat_id: int, message_id: int):
     except asyncio.CancelledError:
         pass
 
-@dp.message(S.ai_chat)
+@dp.message(F.text | F.photo, F.chat.type.in_({"private"}))
 async def ai_msg(msg: Message, state: FSMContext):
     uid = msg.from_user.id
+    current_state = await state.get_state()
+    if not _should_handle_ai_message(current_state, uid, AI_ACTIVE_USERS):
+        return
     has_photo = bool(msg.photo)
     has_text  = bool(msg.text or msg.caption)
     if not has_text and not has_photo:
@@ -80,6 +95,7 @@ async def cb_ai_clear(call: CallbackQuery):
 async def cb_ai_exit(call: CallbackQuery, state: FSMContext):
     await state.clear()
     uid = call.from_user.id
+    AI_ACTIVE_USERS.discard(uid)
     await call.answer()
     await call.message.edit_text(
         home_text(),
