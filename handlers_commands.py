@@ -1,7 +1,7 @@
 """Все точечные команды: .spam .mute .nomute .afk .code .wbl .ai .price .curs и форматирование."""
 import asyncio
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from aiogram import F
@@ -20,9 +20,11 @@ from business_api import (
 from core import BOT_USERNAME, bot, dp, log
 from functions import (
     LINE,
+    _POPULAR_CURS,
     _business_edit_ai_html,
     _edit_ai_html,
-    _get_curs_ru,
+    _fmt_curs_rate,
+    _get_curs_cached,
     _get_image_base64,
     _price_estimate,
     _reply_ai_html,
@@ -753,6 +755,134 @@ async def on_price_group(msg: Message):
 
 
 # ── .curs (Business + группы/ЛС) ───────────────────────────────────────
+_CURS_KBD = {
+    "inline_keyboard": [
+        [{"text": "🧮 Калькулятор", "callback_data": "curs_calc"}],
+        [{"text": "✕ Закрыть", "callback_data": "curs_close"}],
+    ]
+}
+
+
+def _curs_kb_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧮 Калькулятор", callback_data="curs_calc")],
+        [InlineKeyboardButton(text="✕ Закрыть", callback_data="curs_close")],
+    ])
+
+
+def _curs_edit_kb_markup() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🧮 Калькулятор", callback_data="curs_calc")],
+        [InlineKeyboardButton(text="← К курсу", callback_data="curs_back")],
+        [InlineKeyboardButton(text="✕ Закрыть", callback_data="curs_close")],
+    ])
+
+
+def _curs_prompt() -> str:
+    return (
+        "🧮 <b>Калькулятор валют</b>\n"
+        f"<code>{LINE}</code>\n\n"
+        "Введи сумму в рублях — покажу,\n"
+        "сколько это в разных валютах.\n\n"
+        "◇ Пример: <code>300</code> · <code>1500</code> · <code>1 250,50</code>"
+    )
+
+
+def _parse_curs_amount(text: str) -> Optional[float]:
+    """Сумма в рублях из текста: 300 · 1 500 · 1250,50. None — некорректно."""
+    t = (text or "").strip().replace(" ", "").replace("\u202f", "").replace(",", ".")
+    if not re.fullmatch(r"\d+(\.\d+)?", t):
+        return None
+    try:
+        v = float(t)
+    except Exception:
+        return None
+    if v <= 0 or v > 10**12:
+        return None
+    return v
+
+
+def _render_curs_calc(amount: float, rates: dict[str, float]) -> str:
+    lines = []
+    for code, flag, name in _POPULAR_CURS:
+        rub = rates.get(code)
+        if rub is None or rub <= 0:
+            continue
+        value = amount / rub
+        lines.append(f"{flag} {name:<12} → <code>{_fmt_curs_rate(value):>10}</code>")
+    if not lines:
+        return "⚠️ <b>Не удалось получить курсы</b> — попробуй позже."
+    return (
+        f"🧮 <b>{_fmt_curs_rate(amount)} ₽</b> — в других валютах\n"
+        f"<code>{LINE}</code>\n\n"
+        + "\n".join(lines)
+        + f"\n\n<code>{LINE}</code>\n"
+        f"◇ Курс: официальный ЦБ РФ · {date.today().strftime('%d.%m.%Y')}\n"
+        f"— 👁️ @{BOT_USERNAME}"
+    )
+
+
+def _curs_call_context(call: CallbackQuery) -> tuple[Optional[str], int, int]:
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not call.message or not call.message.chat:
+        return None, 0, 0
+    return conn_id, call.message.chat.id, call.message.message_id
+
+
+async def _curs_edit_message(conn_id: Optional[str], chat_id: int, msg_id: int, text: str, reply_markup) -> bool:
+    if conn_id:
+        markup = reply_markup.model_dump(exclude_none=True) if isinstance(reply_markup, InlineKeyboardMarkup) else reply_markup
+        return await _business_edit_message(conn_id, chat_id, msg_id, text, reply_markup=markup)
+    try:
+        await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=reply_markup)
+        return True
+    except Exception:
+        return False
+
+
+async def _curs_delete_message(conn_id: Optional[str], chat_id: int, msg_id: int):
+    if conn_id:
+        try:
+            await _business_delete_message_ex(conn_id, msg_id)
+        except Exception:
+            pass
+    else:
+        try:
+            await bot.delete_message(chat_id, msg_id)
+        except Exception:
+            pass
+
+
+# ── Калькулятор .curs: сессии без FSM (надёжно работает и в бизнес-чатах) ──
+_CURS_SESSION_TTL = 10 * 60  # сессия калькулятора живёт 10 минут
+_curs_sessions: dict[tuple, dict] = {}  # (conn_id|'', chat_id, user_id) -> {"msg_id", "ts"}
+
+
+def _curs_session_key(conn_id: Optional[str], chat_id: int, user_id: int) -> tuple:
+    return (conn_id or "", chat_id, user_id)
+
+
+def _curs_session_save(conn_id: Optional[str], chat_id: int, user_id: int, msg_id: int):
+    now = asyncio.get_running_loop().time()
+    for k in [k for k, v in _curs_sessions.items() if now - v.get("ts", 0) > _CURS_SESSION_TTL]:
+        _curs_sessions.pop(k, None)
+    _curs_sessions[_curs_session_key(conn_id, chat_id, user_id)] = {"msg_id": msg_id, "ts": now}
+
+
+def _curs_session_get(conn_id: Optional[str], chat_id: int, user_id: int) -> Optional[dict]:
+    key = _curs_session_key(conn_id, chat_id, user_id)
+    data = _curs_sessions.get(key)
+    if not data:
+        return None
+    now = asyncio.get_running_loop().time()
+    if now - data.get("ts", 0) > _CURS_SESSION_TTL:
+        _curs_sessions.pop(key, None)
+        return None
+    return data
+
+
 @dp.business_message(F.text.regexp(r"(?i)^\.curs$"))
 async def on_curs_inline(msg: Message):
     if not msg.business_connection_id:
@@ -762,14 +892,25 @@ async def on_curs_inline(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    curs_text = await _get_curs_ru()
+    curs_text, _ = await _get_curs_cached()
     if curs_text is None:
         curs_text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
-    await _business_edit_ai_html(
-        msg.business_connection_id, msg.chat.id, msg.message_id,
-        prefix="", answer=curs_text,
+    ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+    if not ok and retry_after:
+        await asyncio.sleep(int(retry_after))
+        await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+    ok, retry_after, _ = await _business_send_message_ex(
+        msg.business_connection_id, msg.chat.id, curs_text,
+        reply_markup=_CURS_KBD, parse_mode="HTML",
     )
+    if not ok and retry_after:
+        await asyncio.sleep(int(retry_after))
+        await _business_send_message_ex(
+            msg.business_connection_id, msg.chat.id, curs_text,
+            reply_markup=_CURS_KBD, parse_mode="HTML",
+        )
     log.info(f"💱 .curs business owner={owner_id} chat={msg.chat.id}")
+
 
 @dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.curs$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
 async def on_curs_anywhere(msg: Message):
@@ -779,11 +920,127 @@ async def on_curs_anywhere(msg: Message):
     await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
     if msg.chat.type in ("group", "supergroup", "channel"):
         await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
-    curs_text = await _get_curs_ru()
+    curs_text, _ = await _get_curs_cached()
     if curs_text is None:
         curs_text = "⚠️ <b>Не удалось получить курс</b> — сервис временно недоступен. Попробуй позже."
-    await _reply_ai_html(msg, prefix="", answer=curs_text)
+    try:
+        await bot.delete_message(msg.chat.id, msg.message_id)
+    except Exception:
+        pass
+    await msg.answer(curs_text, reply_markup=_curs_kb_markup())
     log.info(f"💱 .curs chat={msg.chat.id} user={uid}")
+
+
+@dp.callback_query(F.data == "curs_close")
+async def cb_curs_close(call: CallbackQuery):
+    """Кнопка «Закрыть» — удаляет сообщение с курсом/калькулятором."""
+    conn_id, chat_id, msg_id = _curs_call_context(call)
+    _curs_sessions.pop(_curs_session_key(conn_id, chat_id, call.from_user.id), None)
+    if not msg_id:
+        await call.answer("✕ Закрыто", show_alert=False)
+        return
+    await _curs_delete_message(conn_id, chat_id, msg_id)
+    await call.answer("✕ Закрыто", show_alert=False)
+
+
+@dp.callback_query(F.data == "curs_back")
+async def cb_curs_back(call: CallbackQuery):
+    """«← К курсу» — возвращает таблицу курсов (берём из кэша, без стейта)."""
+    conn_id, chat_id, msg_id = _curs_call_context(call)
+    _curs_sessions.pop(_curs_session_key(conn_id, chat_id, call.from_user.id), None)
+    if not msg_id:
+        await call.answer("←", show_alert=False)
+        return
+    text, _ = await _get_curs_cached()
+    if text is None:
+        text = "⚠️ Курс недоступен — набери <code>.curs</code> заново."
+    await _curs_edit_message(conn_id, chat_id, msg_id, text, _curs_kb_markup())
+    await call.answer()
+
+
+@dp.callback_query(F.data == "curs_calc")
+async def cb_curs_calc(call: CallbackQuery):
+    """«Калькулятор» — просим ввести сумму в рублях."""
+    conn_id, chat_id, msg_id = _curs_call_context(call)
+    if not msg_id:
+        await call.answer("⛔", show_alert=True)
+        return
+    _curs_session_save(conn_id, chat_id, call.from_user.id, msg_id)
+    await _curs_edit_message(conn_id, chat_id, msg_id, _curs_prompt(), InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="← К курсу", callback_data="curs_back")],
+        [InlineKeyboardButton(text="✕ Закрыть", callback_data="curs_close")],
+    ]))
+    await call.answer()
+
+
+def _curs_calc_active_business(msg: Message) -> bool:
+    return bool(msg.business_connection_id and msg.from_user) and _curs_session_get(
+        msg.business_connection_id, msg.chat.id, msg.from_user.id
+    ) is not None
+
+
+def _curs_calc_active_regular(msg: Message) -> bool:
+    return bool(msg.from_user) and _curs_session_get(
+        None, msg.chat.id, msg.from_user.id
+    ) is not None
+
+
+async def _curs_handle_amount(conn_id: Optional[str], chat_id: int, user_id: int, text: str, delete_fn, reply_fn):
+    """Общая логика калькулятора: сумма → конвертация в то же сообщение."""
+    session = _curs_session_get(conn_id, chat_id, user_id)
+    if not session:
+        return
+    amount = _parse_curs_amount(text)
+    if amount is None:
+        if re.search(r"\d", text or ""):
+            await reply_fn("◇ Введи число в рублях, например: <code>300</code>")
+        return
+    await delete_fn()
+    _, rates = await _get_curs_cached()
+    result = _render_curs_calc(amount, rates or {})
+    ok = await _curs_edit_message(conn_id, chat_id, session["msg_id"], result, _curs_edit_kb_markup())
+    if not ok:
+        await reply_fn(result)
+    _curs_sessions.pop(_curs_session_key(conn_id, chat_id, user_id), None)
+
+
+@dp.business_message(_curs_calc_active_business)
+async def on_curs_amount_business(msg: Message):
+    """Сумма в рублях из бизнес-чата (ЛС с другом и т.п.)."""
+    async def _delete():
+        try:
+            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        except Exception:
+            pass
+
+    async def _reply(text: str):
+        try:
+            await _business_send_message_ex(msg.business_connection_id, msg.chat.id, text, parse_mode="HTML")
+        except Exception:
+            pass
+
+    await _curs_handle_amount(
+        msg.business_connection_id, msg.chat.id, msg.from_user.id,
+        msg.text or "", _delete, _reply,
+    )
+
+
+@dp.message(_curs_calc_active_regular)
+async def on_curs_amount(msg: Message):
+    """Сумма в рублях из ЛС с ботом или группы."""
+    async def _delete():
+        try:
+            await bot.delete_message(msg.chat.id, msg.message_id)
+        except Exception:
+            pass
+
+    async def _reply(text: str):
+        await msg.answer(text)
+
+    await _curs_handle_amount(
+        None, msg.chat.id, msg.from_user.id,
+        msg.text or "", _delete, _reply,
+    )
 
 
 # ── Форматирование: .bold .italic .mono .line .crossed .hidden .quote ─

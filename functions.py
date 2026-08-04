@@ -924,13 +924,32 @@ async def _fetch_erapi_rates() -> Optional[dict[str, float]]:
         log.warning(f"Curs API error: {e}")
         return None
 
-async def _get_curs_ru() -> Optional[str]:
-    """Курс популярных валют к рублю: 1 ед. = ₽.
+_CURS_TTL_SECONDS = 30 * 60  # кэш курсов: обновление каждые 30 минут
+_curs_cache: dict = {"ts": 0.0, "text": "", "rates": {}, "source": "", "date_str": ""}
+_curs_refresh_lock = asyncio.Lock()  # защита от дублирующих запросов при холодном кэше
 
-    Сначала — официальные курсы ЦБ РФ (точный источник для рубля).
-    Валюты, которых нет у ЦБ (например, гривна), дозаполняются из open.er-api.com.
-    Если ЦБ недоступен — полностью переключаемся на open.er-api.com.
-    """
+
+def _render_curs_text(rates: dict[str, float], source: str, date_str: str) -> Optional[str]:
+    lines = []
+    for code, flag, name in _POPULAR_CURS:
+        rub = rates.get(code)
+        if rub is None or rub <= 0:
+            continue
+        lines.append(f"{flag} {name:<12} → <code>{_fmt_curs_rate(rub):>10} ₽</code>")
+    if not lines:
+        return None
+    return (
+        "💱 <b>КУРС ВАЛЮТ К РУБЛЮ</b>\n"
+        f"<code>{LINE}</code>\n\n"
+        + "\n".join(lines)
+        + f"\n\n<code>{LINE}</code>\n"
+        f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}\n"
+        f"— 👁️ @{BOT_USERNAME}"
+    )
+
+
+async def _refresh_curs_cache() -> bool:
+    """Обновляет кэш курсов: сначала ЦБ РФ, недостающие — er-api, фолбэк целиком на er-api."""
     source = "актуальный курс"
     date_str = date.today().strftime("%d.%m.%Y")
     rates: dict[str, float] = {}
@@ -952,23 +971,41 @@ async def _get_curs_ru() -> Optional[str]:
         if er:
             rates.update(er)
     if not rates:
-        return None
-    lines = []
-    for code, flag, name in _POPULAR_CURS:
-        rub = rates.get(code)
-        if rub is None or rub <= 0:
-            continue
-        lines.append(f"{flag} {name:<12} → <code>{_fmt_curs_rate(rub):>10} ₽</code>")
-    if not lines:
-        return None
-    return (
-        "💱 <b>КУРС ВАЛЮТ К РУБЛЮ</b>\n"
-        f"<code>{LINE}</code>\n\n"
-        + "\n".join(lines)
-        + f"\n\n<code>{LINE}</code>\n"
-        f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}\n"
-        f"— 👁️ @{BOT_USERNAME}"
-    )
+        return False
+    text = _render_curs_text(rates, source, date_str)
+    if not text:
+        return False
+    _curs_cache.update({
+        "ts": asyncio.get_running_loop().time(),
+        "text": text,
+        "rates": rates,
+        "source": source,
+        "date_str": date_str,
+    })
+    return True
+
+
+async def _get_curs_cached() -> tuple[Optional[str], Optional[dict[str, float]]]:
+    """Курс валют к рублю с кэшем 30 минут: (текст, {код: ₽ за 1 ед.}).
+
+    Если API недоступны — отдаём последний известный курс (ответ не теряется).
+    """
+    now = asyncio.get_running_loop().time()
+    cache = _curs_cache
+    if cache.get("text") and now - cache.get("ts", 0) < _CURS_TTL_SECONDS:
+        return cache["text"], cache.get("rates") or None
+    async with _curs_refresh_lock:
+        now = asyncio.get_running_loop().time()
+        if cache.get("text") and now - cache.get("ts", 0) < _CURS_TTL_SECONDS:
+            return cache["text"], cache.get("rates") or None
+        if await _refresh_curs_cache():
+            return cache["text"], cache.get("rates")
+    if cache.get("text"):
+        return (
+            cache["text"] + "\n\n◇ <i>данные могли устареть — сервис курсов временно недоступен</i>",
+            cache.get("rates") or None,
+        )
+    return None, None
 
 SEARCH_TRIGGERS = [
     "курс", "цена", "цены", "стоимость", "сколько стоит", "подорожал",
