@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 import database as db
 from core import S, bot, dp, log
-from functions import LINE, _get_image_data, _reply_ai_html, _send_code_files, ai_history, groq_chat, home_text, kb_ai, kb_back, kb_main
+from functions import LINE, _reply_ai_html, _send_code_files, ai_history, groq_chat, home_text, kb_ai, kb_back, kb_main
 
 
 @dp.callback_query(F.data == "ai_open")
@@ -16,7 +16,7 @@ async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await call.message.edit_text(
         f"◆ <b>ИИ-консьерж</b>\n{LINE}\n"
-        f"Модель: <b>GPT-OSS 120B</b> · Vision: Qwen 3.6 27B\n"
+        f"Модель: <b>GPT-OSS 120B</b>\n"
         f"Лимит: <b>без ограничений</b>\n\n"
         "Спрашивай что угодно — отвечу тихо и быстро ◆",
         reply_markup=kb_ai(),
@@ -42,26 +42,14 @@ async def _spin_thinking(chat_id: int, message_id: int):
 @dp.message(S.ai_chat)
 async def ai_msg(msg: Message, state: FSMContext):
     uid = msg.from_user.id
-    has_photo = bool(msg.photo)
-    has_text  = bool(msg.text or msg.caption)
-    if not has_text and not has_photo:
-        await msg.answer("◇ Отправь текст или фото (можно с подписью).")
+    text_content = (msg.text or msg.caption or "").strip()
+    if not text_content:
+        await msg.answer("◇ Отправь текст сообщением — ИИ отвечает на текстовые вопросы.")
         return
-    text_content = msg.text or msg.caption or ""
     thinking = await msg.answer(THINKING_FRAMES[0])
     spin_task = asyncio.create_task(_spin_thinking(thinking.chat.id, thinking.message_id))
-    image_b64 = None
-    image_mime = None
-    if has_photo:
-        file_id = msg.photo[-1].file_id
-        image_data = await _get_image_data(bot, file_id)
-        if image_data is None:
-            spin_task.cancel()
-            await thinking.edit_text("◇ Не смог загрузить фото — попробуй ещё раз.")
-            return
-        image_mime, image_b64 = image_data
     try:
-        reply, files = await groq_chat(uid, text_content, image_base64=image_b64, image_mime=image_mime)
+        reply, files = await groq_chat(uid, text_content)
     finally:
         spin_task.cancel()
     await thinking.delete()

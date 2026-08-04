@@ -15,12 +15,12 @@ GROQ_API_KEY2 = os.environ.get("GROQ_API_KEY2", "")
 GROQ_API_KEY3 = os.environ.get("GROQ_API_KEY3", "")  # аварийный ключ (на случай исчерпания лимитов 1 и 2)
 GROQ_API_KEYS = [k for k in (GROQ_API_KEY, GROQ_API_KEY2, GROQ_API_KEY3) if k and k.strip()]
 BOT_USERNAME = "Quiet_Mod_Bot"
-# Vision-модель (распознавание фото): единственная живая мультимодальная модель Groq.
-# llama-4-maverick (09.03.26) и llama-4-scout (17.07.26) задепрекейчены.
-GROQ_MODEL = "qwen/qwen3.6-27b"
-# Текстовая модель: флагман Groq (120B, Production) — дешевле и быстрее llama-3.3-70b
-# (которая задепрекейчена 16.08.26). Groq сам рекомендует её как замену.
-GROQ_MODEL_TEXT = "openai/gpt-oss-120b"
+# Единая модель для всего бота: флагман Groq (120B, Production) — дешевле и быстрее
+# llama-3.3-70b (задепрекейчена 16.08.26). Groq сам рекомендует её как замену.
+# Распознавание фото ОТКЛЮЧЕНО: llama-4-maverick (09.03.26), llama-4-scout (17.07.26)
+# и qwen-vision задепрекейчены — бот работает только на текстовой модели.
+GROQ_MODEL = "openai/gpt-oss-120b"
+GROQ_MODEL_TEXT = GROQ_MODEL
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",

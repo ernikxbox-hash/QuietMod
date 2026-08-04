@@ -4,7 +4,6 @@ from datetime import date, timedelta, timezone
 from typing import Optional
 import aiohttp
 from ddgs import DDGS
-from aiogram import Bot
 from aiogram.types import (
     BufferedInputFile,
     InlineKeyboardButton,
@@ -15,11 +14,9 @@ from html import escape as html_escape
 import database as db
 from core import (
     ADMIN_ID,
-    BOT_TOKEN,
     BOT_USERNAME,
     GROQ_API_KEYS,
     GROQ_MODEL,
-    GROQ_MODEL_TEXT,
     bot,
     get_http,
     log,
@@ -27,7 +24,6 @@ from core import (
 from business_api import _business_edit_message_ex
 
 ai_history: dict[int, list] = {}
-_last_vision_image: dict[int, tuple[str, str]] = {}  # uid -> (mime, base64): последнее фото для follow-up вопросов
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
 business_muted_chats: set[tuple[str, int]] = set()
@@ -368,10 +364,10 @@ def kb_donate() -> InlineKeyboardMarkup:
 CMD_FEATURES: dict[str, dict] = {
     "ai": {
         "title": "◇ .ai",
-        "desc": "Задай вопрос — ИИ ответит. Распознаёт фото (ответь на фото командой .ai). Встроенный поиск: курс валют и крипты, погода, новости, веб. Может присылать готовые файлы: код, скрипты, сайты.",
-        "usage": ".ai твой вопрос · .ai (ответом на фото) · .ai сделай файл",
-        "example": ".ai курс доллара · .ai погода в Москве · .ai что на фото? · .ai сделай калькулятор на python",
-        "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах. Модель GPT-OSS 120B · фото — Qwen 3.6 27B Vision"
+        "desc": "Задай вопрос — ИИ ответит. Встроенный поиск: курс валют и крипты, погода, новости, веб. Может присылать готовые файлы: код, скрипты, сайты.",
+        "usage": ".ai твой вопрос · .ai сделай файл",
+        "example": ".ai курс доллара · .ai погода в Москве · .ai сделай калькулятор на python",
+        "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах. Модель GPT-OSS 120B"
     },
     "spam": {
         "title": "◇ .spam",
@@ -541,44 +537,6 @@ SYSTEM_PROMPT = (
     "— Не используй маркеры, если пользователь не просил файл — просто отвечай как обычно."
 )
 
-_IMAGE_MAX_BYTES = 20 * 1024 * 1024  # лимит vision-модели Groq: 20MB на запрос с картинкой
-
-async def _get_image_data(bot: Bot, file_id: str) -> Optional[tuple[str, str]]:
-    """Скачивает изображение и возвращает (mime_type, base64).
-
-    Mime определяется по расширению файла, чтобы правильно строить data URL
-    для vision-модели Groq (qwen/qwen3.6-27b принимает jpeg/png/webp/gif).
-    Картинки больше 20MB отклоняются заранее (лимит Groq).
-    """
-    try:
-        file = await bot.get_file(file_id)
-        path = file.file_path or ""
-        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-        mime = {
-            "png": "image/png",
-            "webp": "image/webp",
-            "gif": "image/gif",
-            "bmp": "image/bmp",
-            "heic": "image/heic",
-        }.get(ext, "image/jpeg")
-        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}"
-        session = get_http()
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-            if resp.status != 200:
-                return None
-            size = resp.content_length or 0
-            if size > _IMAGE_MAX_BYTES:
-                log.warning(f"Image too large: {size} bytes (limit {_IMAGE_MAX_BYTES})")
-                return None
-            import base64
-            data = await resp.read()
-            if len(data) > _IMAGE_MAX_BYTES:
-                log.warning(f"Image too large (actual): {len(data)} bytes")
-                return None
-            return mime, base64.b64encode(data).decode("utf-8")
-    except Exception as e:
-        log.warning(f"Image download: {e}")
-    return None
 MEGERA_TEXT = (
     "◆ <b>МЕГЕРА</b> — мифическое существо, обитающее в недрах школы Денисовка.\n\n"
     "По преданиям старожилов, это создание появилось ещё в эпоху динозавров "
@@ -1208,12 +1166,11 @@ def _reply_claims_alive(text: str) -> bool:
     return bool(_ALIVE_RE.search(text or ""))
 
 def _sanitize_text_messages(messages: list) -> list:
-    """Гарантирует формат для ТЕКСТОВОЙ модели Groq: content всегда строка.
+    """Гарантирует формат для модели Groq: content всегда строка.
 
-    Vision-сообщения (content — список частей image_url/text) преобразуются
-    в строку: извлекается текстовая часть, при её отсутствии используется
-    нейтральный маркер. Картинки в текстовую модель не передаются.
-    Работаем с копиями — исходная история не изменяется.
+    Некорректные типы (списки, None и т.п.) приводятся к строке —
+    это защита от битых сообщений в истории. Работаем с копиями —
+    исходная история не изменяется.
     """
     out: list[dict] = []
     for m in messages:
@@ -1238,36 +1195,6 @@ def _sanitize_text_messages(messages: list) -> list:
     return out
 
 
-def _sanitize_vision_messages(messages: list) -> list:
-    """Гарантирует формат для VISION-модели Groq (qwen/qwen3.6-27b).
-
-    content может быть строкой ИЛИ списком частей image_url/text.
-    Некорректные типы приводятся к строке. Работаем с копиями.
-    """
-    out: list[dict] = []
-    for m in messages:
-        m = dict(m)
-        content = m.get("content")
-        if isinstance(content, str):
-            out.append(m)
-            continue
-        if isinstance(content, list):
-            valid = all(
-                isinstance(p, dict) and isinstance(p.get("type"), str) and p.get("type")
-                for p in content
-            )
-            if valid:
-                out.append(m)
-                continue
-            m["content"] = str(content)
-        elif content is None:
-            m["content"] = ""
-        else:
-            m["content"] = str(content)
-        out.append(m)
-    return out
-
-
 async def _groq_request(messages: list, max_tokens: int = 2048, temperature: float = 0.7, model: str = GROQ_MODEL) -> Optional[str]:
     """Отправка запроса в Groq с фолбэком между API-ключами.
 
@@ -1276,20 +1203,21 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
     Каждый следующий запрос начинается с последнего рабочего ключа.
     Модель у всех ключей одна и та же (параметр model).
 
-    Перед отправкой история приводится к формату выбранной модели:
-    — vision-модель (GROQ_MODEL): строки и списки частей image_url/text;
-    — все остальные модели (включая GROQ_MODEL_TEXT): ТОЛЬКО строки.
+    Перед отправкой история приводится к формату модели: content всегда строка.
     """
-    if model == GROQ_MODEL:
-        messages = _sanitize_vision_messages(messages)
-    else:
-        messages = _sanitize_text_messages(messages)
+    messages = _sanitize_text_messages(messages)
     payload = {
         "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    if model == GROQ_MODEL:
+        # GPT-OSS 120B — reasoning-модель: по умолчанию думает на «medium»,
+        # это тысячи токенов на каждый запрос (которые потом всё равно
+        # вырезаются как <think>). Ставим «low» — ответы те же, а трата
+        # токенов (и риск TPM-лимита) в разы меньше.
+        payload["reasoning_effort"] = "low"
     global _GROQ_KEY_INDEX
     keys = GROQ_API_KEYS
     n = len(keys)
@@ -1466,33 +1394,38 @@ async def _send_code_files(chat_id: int, files: list[dict], business_connection_
         except Exception as e:
             log.warning(f"send document {name}: {e}")
 
-async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None, image_mime: Optional[str] = None) -> tuple[str, list[dict]]:
+def _strip_think_blocks(text: str) -> str:
+    """Вырезает reasoning-блоки <think>...</think> из ответа модели.
+
+    GPT-OSS 120B (как и другие reasoning-модели) иногда вставляет в ответ
+    «мыслительный» блок <think>...</think> — его нужно убирать, чтобы
+    пользователь видел только чистый ответ. Блок может начинаться с «◆ ».
+    """
+    if not text:
+        return text
+    t = re.sub(r"(?:◆\s*)?<think>.*?</think>\s*", "", text, flags=re.S).strip()
+    # Незакрытый <think>: модель может обрезаться на лимите токенов прямо
+    # посреди «мышления». Мышление всегда идёт ДО ответа, поэтому всё,
+    # что идёт после последнего незакрытого <think> — мусор, отрезаем.
+    idx = t.lower().rfind("<think")
+    if idx != -1 and "</think" not in t[idx:].lower():
+        cut = t.rfind("\n", 0, idx)
+        t = (t[:cut] if cut != -1 else t[:idx]).rstrip()
+    return t.strip()
+
+
+async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
     egg = _check_easter_egg(user_msg)
     if egg:
         return egg, []
     history = ai_history.setdefault(uid, [])
-    # ВАЖНО: base64-картинку НЕ кладём в историю — она весит тысячи токенов,
-    # и старые картинки раздували следующие запросы за TPM-лимит Groq (8K/мин).
-    # В историю попадает только текст; картинка живёт в текущем запросе.
-    if image_base64:
-        _last_vision_image[uid] = (image_mime or "image/jpeg", image_base64)
-        history.append({"role": "user", "content": user_msg if user_msg else "[фото]"})
-    else:
-        # Follow-up вопрос после фото: если последнее СООБЩЕНИЕ ЮЗЕРА было «[фото]»
-        # и нового фото нет — подхватываем последнюю картинку, чтобы не терять контекст.
-        # (после фото-обмена в конце истории стоит ответ ассистента, поэтому
-        #  ищем именно последний user-элемент, а не history[-1])
-        cached = _last_vision_image.get(uid)
-        last_user = next((m for m in reversed(history) if m.get("role") == "user"), None)
-        if cached and last_user and last_user.get("content") == "[фото]" and not user_msg.strip().startswith("."):
-            image_mime, image_base64 = cached
-        history.append({"role": "user", "content": user_msg})
+    history.append({"role": "user", "content": user_msg})
     if len(history) > 10:
         ai_history[uid] = history[-10:]
         history = ai_history[uid]
-    active_model = GROQ_MODEL if image_base64 else GROQ_MODEL_TEXT
+    active_model = GROQ_MODEL
     already_searched = False
-    if not image_base64 and _is_weather_query(user_msg):
+    if _is_weather_query(user_msg):
         city = _extract_city(user_msg)
         weather_text = await _get_weather(city) if city else None
         if weather_text:
@@ -1503,37 +1436,17 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
             reply = f"⚠️ Не нашёл город «{city}» — уточни название и спроси ещё раз."
             ai_history[uid].append({"role": "assistant", "content": reply})
             return reply, []
-    if not image_base64 and _is_currency_query(user_msg):
+    if _is_currency_query(user_msg):
         currency_text = await _get_currency_rate(user_msg)
         if currency_text:
             log.info(f"💱 Currency rate for uid={uid}: {user_msg[:60]}")
             ai_history[uid].append({"role": "assistant", "content": currency_text})
             return currency_text, []
-    if image_base64:
-        # Vision-запрос: system + последние 2 сообщения истории (текст) + текущая картинка.
-        # Урезанный контекст — чтобы запрос гарантированно влезал в TPM-лимит Qwen.
-        mime = image_mime or "image/jpeg"
-        image_content = [
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{mime};base64,{image_base64}"}
-            },
-            {
-                "type": "text",
-                "text": user_msg if user_msg else "Опиши что на фото."
-            }
-        ]
-        # Контекст — только сообщения ДО текущего (текущее придёт с картинкой ниже),
-        # и только последние 2, чтобы запрос был лёгким.
-        context = history[-3:-1]
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + context
-        messages.append({"role": "user", "content": image_content})
-    else:
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     today_str = date.today().strftime("%d.%m.%Y")
-    is_death = not image_base64 and _is_death_query(user_msg)
+    is_death = _is_death_query(user_msg)
     search_query = user_msg
-    if not image_base64 and (is_death or _needs_search_preemptive(user_msg)):
+    if is_death or _needs_search_preemptive(user_msg):
         log.info(f"🔍 Preemptive search for uid={uid}: {user_msg[:60]}")
         if is_death:
             subject = _extract_death_subject(user_msg)
@@ -1561,10 +1474,9 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
                 )
             messages = messages + [{"role": "user", "content": search_instr}]
             already_searched = True
-    # Vision-модель (qwen) — thinking-модель, но TPM-лимит Groq 8K/мин считается
-    # и на выходные токены: бюджет 4096 (не 8192), чтобы не упереться в лимит.
-    max_tokens = 8192 if _wants_file(user_msg) else (4096 if image_base64 else 2048)
+    max_tokens = 8192 if _wants_file(user_msg) else 2048
     reply = await _groq_request(messages, max_tokens=max_tokens, model=active_model)
+    reply = _strip_think_blocks(reply)
     if reply is None:
         return (
             "◆ <b>ИИ недоступен</b> — вероятно, исчерпан бесплатный лимит токенов на сегодня.\n\n"
@@ -1577,7 +1489,7 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
     reply = _normalize_code_blocks(reply)
     if already_searched:
         reply += "\n\n◐ <i>ответ дополнен поиском</i>"
-    if not image_base64 and not already_searched and _needs_search(reply, user_msg):
+    if not already_searched and _needs_search(reply, user_msg):
         log.info(f"🔍 Fallback search triggered for uid={uid}: {user_msg[:60]}")
         search_results = await _ddg_search(search_query)
         if search_results:
@@ -1596,6 +1508,7 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
             ]
             reply_with_search = await _groq_request(augmented_messages, max_tokens=max_tokens, model=active_model)
             if reply_with_search:
+                reply_with_search = _strip_think_blocks(reply_with_search)
                 reply_with_search, extra_files = _parse_code_files(reply_with_search)
                 files += extra_files
                 reply = _normalize_code_blocks(reply_with_search) + "\n\n◐ <i>ответ дополнен поиском</i>"
@@ -1622,6 +1535,7 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None,
             ]
             v_reply = await _groq_request(v_messages, max_tokens=max_tokens, model=active_model)
             if v_reply:
+                v_reply = _strip_think_blocks(v_reply)
                 v_reply, extra_files = _parse_code_files(v_reply)
                 files += extra_files
                 reply = _normalize_code_blocks(v_reply) + "\n\n◐ <i>перепроверено по свежим данным</i>"
