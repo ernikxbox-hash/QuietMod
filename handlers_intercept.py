@@ -21,7 +21,7 @@ from business_api import (
     _business_send_message_ex,
     _get_owner_id_cached,
 )
-from core import BOT_TOKEN, GROQ_API_KEYS, bot, dp, get_http, log
+from core import BOT_TOKEN, BOT_USERNAME, GROQ_API_KEYS, bot, dp, get_http, log
 from functions import (
     LINE,
     MEDIA_MAP,
@@ -55,7 +55,7 @@ def _extract_media(msg: Message) -> tuple[str, Optional[str]]:
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".info", ".online", ".offline", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:

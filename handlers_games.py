@@ -2,6 +2,7 @@
 import asyncio
 import random
 import re
+import time
 from typing import Optional
 
 from aiogram import F
@@ -21,7 +22,18 @@ _GROUP_MEMBERS: dict[int, dict[int, dict]] = {}  # chat_id -> {user_id: {id, use
 
 def _knb_game_alive(game: dict) -> bool:
     """True, если игра/вызов ещё актуальна (не протухла за 15 минут)."""
-    return (asyncio.get_running_loop().time() - game.get("ts", 0)) < _KNB_STALE_SECONDS
+    ts = game.get("ts", 0) or 0
+    if ts <= 0:
+        return False  # без метки времени игра считается протухшей
+    return (time.monotonic() - ts) < _KNB_STALE_SECONDS
+
+
+def _knb_forget_stale() -> None:
+    """Подчищает все протухшие игры (старше 15 минут) из памяти."""
+    now = time.monotonic()
+    stale = [k for k, g in knb_games.items() if (g.get("ts", 0) or 0) <= 0 or (now - (g.get("ts", 0) or 0)) >= _KNB_STALE_SECONDS]
+    for k in stale:
+        knb_games.pop(k, None)
 
 def _knb_cache_member(chat_id: int, user) -> None:
     if not user or not getattr(user, "id", None):
@@ -144,18 +156,17 @@ async def on_knb_start(msg: Message):
         # ── ЛС (Business): мгновенная игра владелец vs собеседник ──
         if not msg.from_user or msg.from_user.id != owner_id:
             return
+        _knb_forget_stale()
         key = ("dm", conn_id, msg.chat.id)
+        # Старая незавершённая игра в этом чате автоматически закрывается,
+        # чтобы можно было начать новую сразу (кнопкой «✕ Отменить» её не
+        # обязательно жать — .knb начинает бой заново)
         if key in knb_games:
-            if not _knb_game_alive(knb_games[key]):
-                knb_games.pop(key, None)
-            else:
-                await _business_edit_message(
-                    conn_id, msg.chat.id, msg.message_id,
-                    "⚔️ <b>Игра уже идёт</b> — закончи её или отмени.\n"
-                    f"<code>{LINE}</code>\n"
-                    "◇ Отменить: кнопка «✕ Отменить» на сообщении игры.",
-                )
-                return
+            knb_games.pop(key, None)
+            await _business_edit_message(
+                conn_id, msg.chat.id, msg.message_id,
+                "⚔️ <b>Предыдущая игра закрыта</b> — начинаем новую! 🥊",
+            )
         game = {
             "mode": "dm",
             "chat_id": msg.chat.id,
@@ -173,7 +184,7 @@ async def on_knb_start(msg: Message):
             "move_b": None,
             "score_a": 0,
             "score_b": 0,
-            "ts": asyncio.get_running_loop().time(),
+            "ts": time.monotonic(),
         }
         knb_games[key] = game
         first_name = game["a_name"] if game["turn"] == "a" else game["b_name"]
@@ -190,16 +201,12 @@ async def on_knb_start(msg: Message):
     if not msg.from_user:
         return
     _knb_cache_member(msg.chat.id, msg.from_user)
+    _knb_forget_stale()
     key = ("bg", conn_id, msg.chat.id)
+    # Старая незавершённая игра в группе автоматически закрывается —
+    # новый вызов .knb начинается сразу
     if key in knb_games:
-        if not _knb_game_alive(knb_games[key]):
-            knb_games.pop(key, None)
-        else:
-            await _business_edit_message(
-                conn_id, msg.chat.id, msg.message_id,
-                "⚔️ <b>В этой группе уже идёт игра</b> — дождись её окончания.",
-            )
-            return
+        knb_games.pop(key, None)
     target = await _knb_resolve_target(msg)
     if target is None:
         await _business_edit_message(
@@ -229,7 +236,7 @@ async def on_knb_start(msg: Message):
         "move_b": None,
         "score_a": 0,
         "score_b": 0,
-        "ts": asyncio.get_running_loop().time(),
+        "ts": time.monotonic(),
     }
     knb_games[key] = game
     game["msg_id"] = msg.message_id
@@ -250,17 +257,12 @@ async def on_knb_challenge(msg: Message):
     _knb_cache_member(chat_id, msg.from_user)
     await db.upsert_user(uid, msg.from_user.username or "", msg.from_user.full_name or "")
     await db.add_bot_chat(chat_id, msg.chat.title or "", msg.chat.type)
+    _knb_forget_stale()
     key = ("group", chat_id)
+    # Старая незавершённая игра в группе автоматически закрывается —
+    # новый вызов .knb начинается сразу
     if key in knb_games:
-        if not _knb_game_alive(knb_games[key]):
-            knb_games.pop(key, None)
-        else:
-            await msg.reply(
-                "⚔️ <b>В этой группе уже идёт игра</b> — дождись её окончания.\n"
-                f"<code>{LINE}</code>\n"
-                "◇ Закрыть текущую игру можно кнопкой «✕ Отменить» на её сообщении."
-            )
-            return
+        knb_games.pop(key, None)
     target = await _knb_resolve_target(msg)
     if target is None:
         await msg.reply(
@@ -287,7 +289,7 @@ async def on_knb_challenge(msg: Message):
         "move_b": None,
         "score_a": 0,
         "score_b": 0,
-        "ts": asyncio.get_running_loop().time(),
+        "ts": time.monotonic(),
     }
     knb_games[key] = game
     try:
