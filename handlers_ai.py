@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 import database as db
 from core import S, bot, dp, log
-from functions import LINE, _get_image_base64, _reply_ai_html, _send_code_files, ai_history, groq_chat, home_text, kb_ai, kb_back, kb_main
+from functions import LINE, _get_image_data, _reply_ai_html, _send_code_files, ai_history, groq_chat, home_text, kb_ai, kb_back, kb_main
 
 
 @dp.callback_query(F.data == "ai_open")
@@ -16,7 +16,7 @@ async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await call.message.edit_text(
         f"◆ <b>ИИ-консьерж</b>\n{LINE}\n"
-        f"Модель: <b>Llama 4 Maverick · Vision</b>\n"
+        f"Модель: <b>GPT-OSS 120B</b> · Vision: Qwen 3.6 27B\n"
         f"Лимит: <b>без ограничений</b>\n\n"
         "Спрашивай что угодно — отвечу тихо и быстро ◆",
         reply_markup=kb_ai(),
@@ -51,15 +51,17 @@ async def ai_msg(msg: Message, state: FSMContext):
     thinking = await msg.answer(THINKING_FRAMES[0])
     spin_task = asyncio.create_task(_spin_thinking(thinking.chat.id, thinking.message_id))
     image_b64 = None
+    image_mime = None
     if has_photo:
         file_id = msg.photo[-1].file_id
-        image_b64 = await _get_image_base64(bot, file_id)
-        if image_b64 is None:
+        image_data = await _get_image_data(bot, file_id)
+        if image_data is None:
             spin_task.cancel()
             await thinking.edit_text("◇ Не смог загрузить фото — попробуй ещё раз.")
             return
+        image_mime, image_b64 = image_data
     try:
-        reply, files = await groq_chat(uid, text_content, image_base64=image_b64)
+        reply, files = await groq_chat(uid, text_content, image_base64=image_b64, image_mime=image_mime)
     finally:
         spin_task.cancel()
     await thinking.delete()

@@ -370,7 +370,7 @@ CMD_FEATURES: dict[str, dict] = {
         "desc": "Задай вопрос — ИИ ответит. Распознаёт фото (ответь на фото командой .ai). Встроенный поиск: курс валют и крипты, погода, новости, веб. Может присылать готовые файлы: код, скрипты, сайты.",
         "usage": ".ai твой вопрос · .ai (ответом на фото) · .ai сделай файл",
         "example": ".ai курс доллара · .ai погода в Москве · .ai что на фото? · .ai сделай калькулятор на python",
-        "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах. Фото распознаёт модель Llama 4 Maverick · Vision"
+        "note": "Безлимитно. Работает в группах, каналах, бизнес-чатах. Модель GPT-OSS 120B · фото — Qwen 3.6 27B Vision"
     },
     "spam": {
         "title": "◇ .spam",
@@ -540,16 +540,41 @@ SYSTEM_PROMPT = (
     "— Не используй маркеры, если пользователь не просил файл — просто отвечай как обычно."
 )
 
-async def _get_image_base64(bot: Bot, file_id: str) -> Optional[str]:
+_IMAGE_MAX_BYTES = 20 * 1024 * 1024  # лимит vision-модели Groq: 20MB на запрос с картинкой
+
+async def _get_image_data(bot: Bot, file_id: str) -> Optional[tuple[str, str]]:
+    """Скачивает изображение и возвращает (mime_type, base64).
+
+    Mime определяется по расширению файла, чтобы правильно строить data URL
+    для vision-модели Groq (qwen/qwen3.6-27b принимает jpeg/png/webp/gif).
+    Картинки больше 20MB отклоняются заранее (лимит Groq).
+    """
     try:
         file = await bot.get_file(file_id)
-        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+        path = file.file_path or ""
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        mime = {
+            "png": "image/png",
+            "webp": "image/webp",
+            "gif": "image/gif",
+            "bmp": "image/bmp",
+            "heic": "image/heic",
+        }.get(ext, "image/jpeg")
+        url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{path}"
         session = get_http()
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
-            if resp.status == 200:
-                import base64
-                data = await resp.read()
-                return base64.b64encode(data).decode("utf-8")
+            if resp.status != 200:
+                return None
+            size = resp.content_length or 0
+            if size > _IMAGE_MAX_BYTES:
+                log.warning(f"Image too large: {size} bytes (limit {_IMAGE_MAX_BYTES})")
+                return None
+            import base64
+            data = await resp.read()
+            if len(data) > _IMAGE_MAX_BYTES:
+                log.warning(f"Image too large (actual): {len(data)} bytes")
+                return None
+            return mime, base64.b64encode(data).decode("utf-8")
     except Exception as e:
         log.warning(f"Image download: {e}")
     return None
@@ -1213,7 +1238,7 @@ def _sanitize_text_messages(messages: list) -> list:
 
 
 def _sanitize_vision_messages(messages: list) -> list:
-    """Гарантирует формат для VISION-модели Groq (llama-4-maverick).
+    """Гарантирует формат для VISION-модели Groq (qwen/qwen3.6-27b).
 
     content может быть строкой ИЛИ списком частей image_url/text.
     Некорректные типы приводятся к строке. Работаем с копиями.
@@ -1268,7 +1293,7 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
     keys = GROQ_API_KEYS
     n = len(keys)
     if n == 0:
-        log.error("Groq: нет ни одного API-ключа (GROQ_API_KEY / GROQ_API_KEY2)")
+        log.error("Groq: нет ни одного API-ключа (GROQ_API_KEY / GROQ_API_KEY2 / GROQ_API_KEY3)")
         return None
     start = _GROQ_KEY_INDEX % n
     for i in range(n):
@@ -1433,16 +1458,17 @@ async def _send_code_files(chat_id: int, files: list[dict], business_connection_
         except Exception as e:
             log.warning(f"send document {name}: {e}")
 
-async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None) -> tuple[str, list[dict]]:
+async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None, image_mime: Optional[str] = None) -> tuple[str, list[dict]]:
     egg = _check_easter_egg(user_msg)
     if egg:
         return egg, []
     history = ai_history.setdefault(uid, [])
     if image_base64:
+        mime = image_mime or "image/jpeg"
         content = [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                "image_url": {"url": f"data:{mime};base64,{image_base64}"}
             },
             {
                 "type": "text",
@@ -1506,7 +1532,9 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                 )
             messages = messages + [{"role": "user", "content": search_instr}]
             already_searched = True
-    max_tokens = 8192 if _wants_file(user_msg) else 2048
+    # Vision-модель (qwen) — thinking-модель: токены размышлений тоже считаются,
+    # поэтому для картинок даём больший бюджет, чтобы ответ не обрезался.
+    max_tokens = 8192 if (_wants_file(user_msg) or image_base64) else 2048
     reply = await _groq_request(messages, max_tokens=max_tokens, model=active_model)
     if reply is None:
         return (
