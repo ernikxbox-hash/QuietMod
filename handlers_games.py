@@ -125,6 +125,13 @@ def _knb_challenge_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def _knb_kb_dump(markup) -> dict:
+    """Сериализует InlineKeyboardMarkup в простой dict для сырого Telegram API."""
+    if isinstance(markup, InlineKeyboardMarkup):
+        return markup.model_dump(exclude_none=True)
+    return markup or {"inline_keyboard": []}
+
+
 def _knb_key_from_call(call: CallbackQuery) -> Optional[tuple]:
     """Ключ игры из callback'а — тот же, что и в хендлере команды."""
     if not call.message or not call.message.chat:
@@ -228,12 +235,12 @@ async def on_knb_start(msg: Message):
         first_name = game["a_name"] if game["turn"] == "a" else game["b_name"]
         text = _knb_header(game) + f"🎲 <b>Первый начинает:</b> {first_name}"
         ok, retry_after, _ = await _business_send_message_ex(
-            conn_id, msg.chat.id, text, reply_markup=_knb_move_kb(), parse_mode="HTML",
+            conn_id, msg.chat.id, text, reply_markup=_knb_kb_dump(_knb_move_kb()), parse_mode="HTML",
         )
         if not ok and retry_after:
             await asyncio.sleep(int(retry_after))
             ok, _, _ = await _business_send_message_ex(
-                conn_id, msg.chat.id, text, reply_markup=_knb_move_kb(), parse_mode="HTML",
+                conn_id, msg.chat.id, text, reply_markup=_knb_kb_dump(_knb_move_kb()), parse_mode="HTML",
             )
         if not ok:
             knb_games.pop(key, None)  # не смогли отправить поле — не держим игру
@@ -285,13 +292,13 @@ async def on_knb_start(msg: Message):
     knb_games[key] = game
     ok, retry_after, _ = await _business_send_message_ex(
         conn_id, msg.chat.id, _knb_challenge_text(game),
-        reply_markup=_knb_challenge_kb(), parse_mode="HTML",
+        reply_markup=_knb_kb_dump(_knb_challenge_kb()), parse_mode="HTML",
     )
     if not ok and retry_after:
         await asyncio.sleep(int(retry_after))
         ok, _, _ = await _business_send_message_ex(
             conn_id, msg.chat.id, _knb_challenge_text(game),
-            reply_markup=_knb_challenge_kb(), parse_mode="HTML",
+            reply_markup=_knb_kb_dump(_knb_challenge_kb()), parse_mode="HTML",
         )
     if not ok:
         knb_games.pop(key, None)
