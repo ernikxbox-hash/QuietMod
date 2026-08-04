@@ -47,9 +47,11 @@ async def ai_msg(msg: Message, state: FSMContext):
     if not has_text and not has_photo:
         await msg.answer("◇ Отправь текст или фото (можно с подписью).")
         return
-    text_content = msg.text or msg.caption or ""
-    if has_photo and not text_content.strip():
+    text_content = (msg.text or msg.caption or "").strip()
+    if has_photo and not text_content:
         text_content = "Опиши что на фото и ответь кратко и по делу."
+    elif has_photo and text_content:
+        text_content = f"{text_content}\n\nОпиши что на фото и ответь кратко и по делу."
     thinking = await msg.answer(THINKING_FRAMES[0])
     spin_task = asyncio.create_task(_spin_thinking(thinking.chat.id, thinking.message_id))
     image_b64 = None

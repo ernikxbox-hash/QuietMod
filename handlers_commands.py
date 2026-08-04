@@ -676,8 +676,13 @@ async def on_ai_group(msg: Message):
     image_b64 = None
     if msg.photo:
         image_b64 = await _get_image_base64(bot, msg.photo[-1].file_id)
+    prompt = question or "Опиши что на фото."
+    if msg.photo and not prompt.strip():
+        prompt = "Опиши что на фото и ответь кратко и по делу."
+    elif msg.photo and prompt.strip():
+        prompt = f"{prompt}\n\nОпиши что на фото и ответь кратко и по делу."
     try:
-        answer, files = await groq_chat(uid, question, image_base64=image_b64)
+        answer, files = await groq_chat(uid, prompt, image_base64=image_b64)
     except Exception as e:
         log.error(f"ai group groq: {e}", exc_info=True)
         answer = (
