@@ -149,7 +149,11 @@ def _knb_key_from_call(call: CallbackQuery) -> Optional[tuple]:
 async def _knb_edit(game: dict, msg_id: int, text: str, reply_markup=None) -> bool:
     """Обновляет сообщение игры (после хода, реванша, отмены)."""
     if game.get("conn_id"):
-        return await _business_edit_message(game["conn_id"], game["chat_id"], msg_id, text, reply_markup=reply_markup)
+        # Бизнес-API шлёт сырой JSON — клавиатуру обязательно в dict
+        return await _business_edit_message(
+            game["conn_id"], game["chat_id"], msg_id, text,
+            reply_markup=_knb_kb_dump(reply_markup),
+        )
     try:
         await bot.edit_message_text(
             text,
