@@ -315,57 +315,74 @@ async def _send_notify(owner_id: int, text: str, reply_markup=None) -> Optional[
         return None
 # Кастомные эмодзи (пак CPT_Emoji / @Cryptomus EMOJI) для кнопок главного меню.
 # ID получены через команду .emoji CPT_Emoji. Пустая строка = без иконки.
-CUSTOM_EMOJI_PROFILE = "5346136537123801643"  # Профиль
-CUSTOM_EMOJI_HOWTO   = "5348292765325212780"  # Подключение
-CUSTOM_EMOJI_SEARCH  = "5345840270279724328"  # Поиск по архиву
-CUSTOM_EMOJI_DONATE  = "5348356047373354143"  # Поддержать проект
-CUSTOM_EMOJI_AI      = "5346024644635804737"  # ИИ-консьерж
+# На кнопках только премиум-иконки (icon_custom_emoji_id) — старые обычные
+# эмодзи из текста кнопок убраны.
+CUSTOM_EMOJI_PROFILE   = "5346136537123801643"  # Профиль
+CUSTOM_EMOJI_HOWTO     = "5348292765325212780"  # Подключение
+CUSTOM_EMOJI_SEARCH    = "5345840270279724328"  # Поиск по архиву
+CUSTOM_EMOJI_DONATE    = "5348356047373354143"  # Поддержать проект
+CUSTOM_EMOJI_AI        = "5346024644635804737"  # ИИ-консьерж
+CUSTOM_EMOJI_REFERRALS = "5348348681504441752"  # Приглашения
+CUSTOM_EMOJI_SUGGEST   = "5348417723103722255"  # Предложить
+CUSTOM_EMOJI_ARCHIVE   = "5346267671065281783"  # Архив
 
 
 def kb_main(uid: int) -> InlineKeyboardMarkup:
     rows = []
     if uid == ADMIN_ID:
-        rows.append([InlineKeyboardButton(text="▲ Admin Suite", callback_data="adm")])
+        rows.append([InlineKeyboardButton(text="Admin Suite", callback_data="adm")])
     rows.append([
-        InlineKeyboardButton(text="▣ Архив",        callback_data="show_all"),
         InlineKeyboardButton(
-            text="◆ Профиль",
+            text="Архив",
+            callback_data="show_all",
+            icon_custom_emoji_id=CUSTOM_EMOJI_ARCHIVE or None,
+        ),
+        InlineKeyboardButton(
+            text="Профиль",
             callback_data="stats",
             icon_custom_emoji_id=CUSTOM_EMOJI_PROFILE or None,
         ),
     ])
     rows.append([
-        InlineKeyboardButton(text="◈ Сохранённые ➩", callback_data="show_saved"),
+        InlineKeyboardButton(text="Сохранённые", callback_data="show_saved"),
     ])
     rows.append([
         InlineKeyboardButton(
-            text="◐ Поиск по архиву",
+            text="Поиск по архиву",
             callback_data="search",
             icon_custom_emoji_id=CUSTOM_EMOJI_SEARCH or None,
         )
     ])
     rows.append([
         InlineKeyboardButton(
-            text="◆ ИИ-консьерж — без лимитов",
+            text="ИИ-консьерж — без лимитов",
             callback_data="ai_open",
             icon_custom_emoji_id=CUSTOM_EMOJI_AI or None,
         )
     ])
     rows.append([
-        InlineKeyboardButton(text="⟡ Приглашения", callback_data="referrals"),
-        InlineKeyboardButton(text="✕ Очистить",    callback_data="clear_cache"),
+        InlineKeyboardButton(
+            text="Приглашения",
+            callback_data="referrals",
+            icon_custom_emoji_id=CUSTOM_EMOJI_REFERRALS or None,
+        ),
+        InlineKeyboardButton(text="Очистить", callback_data="clear_cache"),
     ])
     rows.append([
-        InlineKeyboardButton(text="✦ Предложить",   callback_data="suggest_idea"),
         InlineKeyboardButton(
-            text="⚙ Подключение",
+            text="Предложить",
+            callback_data="suggest_idea",
+            icon_custom_emoji_id=CUSTOM_EMOJI_SUGGEST or None,
+        ),
+        InlineKeyboardButton(
+            text="Подключение",
             callback_data="howto",
             icon_custom_emoji_id=CUSTOM_EMOJI_HOWTO or None,
         ),
     ])
     rows.append([
         InlineKeyboardButton(
-            text="⟡ Поддержать проект",
+            text="Поддержать проект",
             callback_data="donate",
             icon_custom_emoji_id=CUSTOM_EMOJI_DONATE or None,
         )
