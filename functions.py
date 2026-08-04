@@ -1,6 +1,5 @@
 import asyncio
 import re
-import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 import aiohttp
@@ -852,22 +851,9 @@ _POPULAR_CURS: list[tuple[str, str, str]] = [
     ("PLN", "🇵🇱", "Злотый"),
 ]
 
-_CURRENCY_CACHE: dict[str, tuple[float, str, dict[str, float], str, str]] = {}
-_CURRENCY_CACHE_TTL_SECONDS = 30 * 60
-
-
 def _fmt_curs_rate(value: float) -> str:
     """Формат курса для .curs: 92,34 · 1 235 · 0,1923 (запятая как разделитель)"""
     return _fmt_rate(value).replace(".", ",")
-
-
-def _currency_cache_is_fresh() -> bool:
-    cached = _CURRENCY_CACHE.get("rates")
-    if not cached:
-        return False
-    ts, _, _, _, _ = cached
-    return (time.monotonic() - ts) < _CURRENCY_CACHE_TTL_SECONDS
-
 
 async def _fetch_cbr_rates() -> Optional[tuple[str, dict[str, float]]]:
     """Официальные курсы ЦБ РФ (точный источник для рубля): (дата, курс за 1 ед.)."""
@@ -961,11 +947,6 @@ def _build_currency_calculator_text(rubles: int, rates: dict[str, float], date_s
 
 async def _get_curs_ru() -> Optional[tuple[str, dict[str, float], str, str]]:
     """Курс популярных валют к рублю: 1 ед. = ₽. Возвращает текст, rates, date, source."""
-    cached = _CURRENCY_CACHE.get("rates")
-    if cached and (asyncio.get_running_loop().time() - cached[0]) < _CURRENCY_CACHE_TTL_SECONDS:
-        text, rates, date_str, source = cached[1], cached[2], cached[3], cached[4]
-        return text, rates, date_str, source
-
     source = "актуальный курс"
     date_str = date.today().strftime("%d.%m.%Y")
     rates: dict[str, float] = {}
@@ -1004,7 +985,6 @@ async def _get_curs_ru() -> Optional[tuple[str, dict[str, float], str, str]]:
         f"◇ 1 ед. валюты = ₽ · ◐ {source} · {date_str}\n"
         f"— 👁️ @{BOT_USERNAME}"
     )
-    _CURRENCY_CACHE["rates"] = (time.monotonic(), text, rates, date_str, source)
     return text, rates, date_str, source
 
 SEARCH_TRIGGERS = [

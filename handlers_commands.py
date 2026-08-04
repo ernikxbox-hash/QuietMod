@@ -755,15 +755,10 @@ async def on_price_group(msg: Message):
 
 
 # ── .curs (Business + группы/ЛС) ───────────────────────────────────────
-def _build_curs_markup() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧮 Калькулятор валюты", callback_data="curs_calc")],
-        [InlineKeyboardButton(text="✕ Закрыть", callback_data="curs_close")],
-        [InlineKeyboardButton(text="← В меню", callback_data="curs_exit")],
-    ])
-
-
-_CURS_KB = _build_curs_markup()
+_CURS_KB = InlineKeyboardMarkup(inline_keyboard=[
+    [InlineKeyboardButton(text="🧮 Калькулятор валюты", callback_data="curs_calc")],
+    [InlineKeyboardButton(text="← В меню", callback_data="curs_exit")],
+])
 
 async def _show_curs_message(msg: Message, *, business_connection_id: str | None = None) -> None:
     data = await _get_curs_ru()
@@ -772,7 +767,7 @@ async def _show_curs_message(msg: Message, *, business_connection_id: str | None
         markup = None
     else:
         text, _, _, _ = data
-        markup = _build_curs_markup()
+        markup = _CURS_KB
     if business_connection_id:
         await _business_edit_ai_html(
             business_connection_id, msg.chat.id, msg.message_id,
@@ -833,7 +828,6 @@ async def cb_curs_calc(call: CallbackQuery, state: FSMContext):
         "Бот пересчитает её в популярные валюты по текущему курсу.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="← Назад к курсу", callback_data="curs_back")],
-            [InlineKeyboardButton(text="✕ Закрыть", callback_data="curs_close")],
             [InlineKeyboardButton(text="← В меню", callback_data="curs_exit")],
         ]),
     )
@@ -858,7 +852,6 @@ async def on_curs_calc_input(msg: Message, state: FSMContext):
     await state.clear()
     await msg.answer(calculator_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="← Назад к курсу", callback_data="curs_back")],
-        [InlineKeyboardButton(text="✕ Закрыть", callback_data="curs_close")],
         [InlineKeyboardButton(text="← В меню", callback_data="curs_exit")],
     ]))
 
@@ -872,16 +865,6 @@ async def cb_curs_back(call: CallbackQuery):
     else:
         text, _, _, _ = data
     await call.message.edit_text(text, reply_markup=_CURS_KB)
-
-
-@dp.callback_query(F.data == "curs_close")
-async def cb_curs_close(call: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await call.answer()
-    try:
-        await call.message.delete()
-    except Exception:
-        await call.message.edit_text("◇ Курс валюты закрыт")
 
 
 @dp.callback_query(F.data == "curs_exit")
