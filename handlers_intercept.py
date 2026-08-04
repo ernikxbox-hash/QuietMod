@@ -21,7 +21,7 @@ from business_api import (
     _business_send_message_ex,
     _get_owner_id_cached,
 )
-from core import BOT_TOKEN, BOT_USERNAME, GROQ_API_KEYS, bot, dp, get_http, log
+from core import BOT_TOKEN, GROQ_API_KEYS, bot, dp, get_http, log
 from functions import (
     LINE,
     MEDIA_MAP,

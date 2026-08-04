@@ -146,13 +146,6 @@ async def init_db():
         detail      TEXT,
         created_at  TEXT NOT NULL
     );
-
-    CREATE TABLE IF NOT EXISTS ai_sessions (
-        owner_id    INTEGER PRIMARY KEY,
-        active      INTEGER NOT NULL DEFAULT 1,
-        updated_at  TEXT NOT NULL
-    );
-
     CREATE INDEX IF NOT EXISTS idx_stats_type ON bot_stats(event_type);
     CREATE INDEX IF NOT EXISTS idx_stats_created ON bot_stats(created_at);
     """)
@@ -220,44 +213,6 @@ async def count_referrals(uid: int) -> int:
     async with db.execute("SELECT COUNT(*) FROM users WHERE referrer_id=?", (uid,)) as cur:
         return (await cur.fetchone())[0]
 async def all_user_ids() -> list[int]:
-    db = _get_conn()
-    async with db.execute("SELECT id FROM users") as cur:
-        return [r[0] for r in await cur.fetchall()]
-
-async def activate_ai_session(owner_id: int) -> None:
-    now = datetime.now().isoformat()
-    db = _get_conn()
-    async with _write_lock:
-        await db.execute(
-            "INSERT INTO ai_sessions (owner_id, active, updated_at) VALUES (?, 1, ?) "
-            "ON CONFLICT(owner_id) DO UPDATE SET active=1, updated_at=excluded.updated_at",
-            (owner_id, now),
-        )
-        await db.commit()
-
-async def deactivate_ai_session(owner_id: int) -> None:
-    now = datetime.now().isoformat()
-    db = _get_conn()
-    async with _write_lock:
-        await db.execute(
-            "INSERT INTO ai_sessions (owner_id, active, updated_at) VALUES (?, 0, ?) "
-            "ON CONFLICT(owner_id) DO UPDATE SET active=0, updated_at=excluded.updated_at",
-            (owner_id, now),
-        )
-        await db.commit()
-
-async def is_ai_session_active(owner_id: int) -> bool:
-    db = _get_conn()
-    async with db.execute("SELECT active FROM ai_sessions WHERE owner_id=?", (owner_id,)) as cur:
-        row = await cur.fetchone()
-        return bool(row and row[0] == 1)
-
-async def get_active_ai_user_ids() -> list[int]:
-    db = _get_conn()
-    async with db.execute("SELECT owner_id FROM ai_sessions WHERE active=1") as cur:
-        return [r[0] for r in await cur.fetchall()]
-
-async def get_all_users(limit: int = 50, offset: int = 0) -> list[dict]:
     db = _get_conn()
     async with db.execute("SELECT id FROM users") as cur:
         return [r[0] for r in await cur.fetchall()]
