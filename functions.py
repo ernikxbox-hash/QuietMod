@@ -524,28 +524,20 @@ SYSTEM_PROMPT = (
     "— Если тебя просят написать код (любой фрагмент от одной строки), "
     "всегда оборачивай его целиком в <pre><code>твой код тут</code></pre> — "
     "это отдельный блок, Telegram сам даёт пользователю кнопку «скопировать».\n"
-    "— ВАЖНО: просто просьба написать код, скрипт или программу — это НЕ просьба о файле. "
-    "Код пиши прямо в чате в <pre><code>...</code></pre> и НЕ используй маркер <FILE>.\n"
     "— Внутри <pre><code>...</code></pre> код пиши как есть, без экранирования "
     "и без Markdown-разметки (без ```).\n"
     "— Короткое имя переменной, команду или путь к файлу внутри обычного текста "
     "оформляй одиночным <code>тегом</code> — не <pre>.\n"
     "— Не смешивай <b> или <i> внутри <pre><code>...</code></pre> — блок кода "
     "должен быть только с <pre><code> и ничем больше.\n\n"
-    "ФАЙЛЫ — ТОЛЬКО ПО ЯВНОЙ ПРОСЬБЕ:\n"
-    "— Маркер <FILE name=\"calculator.py\">код</FILE> используй ТОЛЬКО когда пользователь "
-    "ЯВНО просит прислать файл: «дай файл», «скинь файлом», «пришли готовый файл», "
-    "«сделай файл .txt», «index.html и дай файл», «сохрани в файл» и т.п.\n"
-    "— Если пользователь НЕ просил файл — не создавай маркеры <FILE> вообще, "
-    "даже если просят «сделай калькулятор на python» или «напиши сайт».\n"
-    "— Имя и расширение файла — ровно как попросил пользователь: просили .py — файл .py, "
-    "просили .css — файл .css, просили .txt — файл .txt, просили index.html — файл index.html. "
-    "Если расширение не указано, выбери по смыслу: python → .py, сайт → index.html (+ style.css, script.js), "
-    "презентация/текст → .txt или .md.\n"
-    "— Файлов может быть НЕСКОЛЬКО подряд (проект, сайт: index.html, style.css, script.js) — "
+    "ФАЙЛЫ — ОТДЕЛЬНОЕ ПРАВИЛО:\n"
+    "— Если пользователь просит создать файл, скрипт, программу или код «файлом» — "
+    "оборачивай каждый файл в маркер: <FILE name=\"calculator.py\">код</FILE>.\n"
+    "— Файлов может быть НЕСКОЛЬКО подряд (например, проект: main.py, settings.py, README.md) — "
     "каждый файл в своём маркере.\n"
     "— Внутри маркера пиши код как есть: без ``` и без HTML-тегов.\n"
-    "— Вне маркеров кратко опиши, что делает файл(ы) и как его запустить."
+    "— Вне маркеров кратко опиши, что делает файл(ы) и как его запустить.\n"
+    "— Не используй маркеры, если пользователь не просил файл — просто отвечай как обычно."
 )
 
 async def _get_image_base64(bot: Bot, file_id: str) -> Optional[str]:
@@ -1280,40 +1272,12 @@ def _safe_filename(name: str) -> str:
         name = name[:60] + "." + ext
     return name
 
-_FILE_EXTS = "py|pyw|js|jsx|ts|tsx|html|htm|css|scss|txt|md|markdown|json|xml|yml|yaml|toml|ini|sh|bash|go|rb|java|cpp|c|h|hpp|php|sql|svg"
-_FILE_EXT_RE = re.compile(rf"(?i)(?<![\w.])[.](?:{_FILE_EXTS})\b")
-_FILE_NAME_RE = re.compile(rf"(?i)\b([a-zа-я0-9_\-]+[.](?:{_FILE_EXTS}))\b")
+_FILE_TRIGGERS = ("файл", "скрипт", "программ", "сделай код", "напиши код", "сгенерируй код", "мини-игр", "игру на")
 
 def _wants_file(text: str) -> bool:
-    """Файл нужен ТОЛЬКО по явной просьбе: слово «файл» или расширение/имя файла.
-
-    «сделай калькулятор на python» — НЕ файл (код прямо в чат).
-    «сделай калькулятор на python и дай файл» — файл.
-    «сделай index.html», «презентация в .txt» — файл.
-    """
+    """Пользователь просит создать файл/код файлом — даём модели больше токенов."""
     t = (text or "").lower()
-    if re.search(r"\bфайл", t):
-        return True
-    return bool(_FILE_EXT_RE.search(t) or _FILE_NAME_RE.search(t))
-
-def _file_hint(text: str) -> Optional[str]:
-    """Подсказка модели: какое имя/расширение файла запросил пользователь."""
-    t = (text or "").strip()
-    m = _FILE_NAME_RE.search(t)
-    if m:
-        name = m.group(1)
-        return (
-            f"Пользователь явно указал имя файла: «{name}». "
-            f"Создай файл ровно с этим именем и расширением: <FILE name=\"{name}\">код</FILE>."
-        )
-    m = _FILE_EXT_RE.search(t)
-    if m:
-        ext = m.group(0)
-        return (
-            f"Пользователь просил файл с расширением «{ext}». "
-            f"Создай файл именно с этим расширением (например: <FILE name=\"file{ext}\">код</FILE>)."
-        )
-    return None
+    return any(k in t for k in _FILE_TRIGGERS)
 
 def _parse_code_files(text: str) -> tuple[str, list[dict]]:
     """Извлекает <FILE name="...">код</FILE>-блоки из ответа ИИ.
@@ -1390,14 +1354,9 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
             log.info(f"💱 Currency rate for uid={uid}: {user_msg[:60]}")
             ai_history[uid].append({"role": "assistant", "content": currency_text})
             return currency_text, []
-    wants_file = _wants_file(user_msg)
-    system_content = SYSTEM_PROMPT
-    if wants_file:
-        hint = _file_hint(user_msg)
-        if hint:
-            system_content = SYSTEM_PROMPT + "\n\n" + hint
-    messages = [{"role": "system", "content": system_content}] + history
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
     today_str = date.today().strftime("%d.%m.%Y")
+    is_death = not image_base64 and _is_death_query(user_msg)
     search_query = user_msg
     if not image_base64 and (is_death or _needs_search_preemptive(user_msg)):
         log.info(f"🔍 Preemptive search for uid={uid}: {user_msg[:60]}")
@@ -1427,7 +1386,7 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                 )
             messages = messages + [{"role": "user", "content": search_instr}]
             already_searched = True
-    max_tokens = 8192 if wants_file else 2048
+    max_tokens = 8192 if _wants_file(user_msg) else 2048
     reply = await _groq_request(messages, max_tokens=max_tokens, model=active_model)
     if reply is None:
         return (
@@ -1491,6 +1450,4 @@ async def groq_chat(uid: int, user_msg: str, image_base64: Optional[str] = None)
                 reply = _normalize_code_blocks(v_reply) + "\n\n◐ <i>перепроверено по свежим данным</i>"
                 log.info(f"⚰️ Death-check corrected uid={uid}")
     ai_history[uid].append({"role": "assistant", "content": reply})
-    if not wants_file:
-        files = []  # защита: маркеры <FILE> из ответа игнорируем — файл не просили
     return reply, files
