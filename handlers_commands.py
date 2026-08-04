@@ -5,7 +5,10 @@ import time
 from datetime import date, datetime, timezone
 from typing import Optional
 
+import aiohttp
+
 from aiogram import F
+from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -18,7 +21,7 @@ from business_api import (
     _business_send_message_ex,
     _get_owner_id_cached,
 )
-from core import BOT_USERNAME, bot, dp, log
+from core import BOT_TOKEN, BOT_USERNAME, bot, dp, get_http, log
 from functions import (
     LINE,
     _POPULAR_CURS,
@@ -914,6 +917,214 @@ async def on_info_group(msg: Message):
         return
     await _reply_ai_html(msg, prefix="", answer=card)
     log.info(f"ℹ️ .info group chat={msg.chat.id} target={target}")
+
+
+# ── .online / .offline (Business private + ЛС с ботом) ────────────────
+# «Бесконечный онлайн»: фоновый цикл каждые ~5 сек шлёт sendChatAction(typing)
+# через бизнес-подключение, поэтому собеседник видит бота (а значит и тебя)
+# онлайн постоянно. Работает в ЛС с другом и в ЛС с ботом. В группах — нет.
+_ONLINE_TICK_SECONDS = 5
+_online_loops: dict[int, dict] = {}  # owner_id -> {"conn_id", "chat_id", "task"}
+
+
+async def _online_worker(owner_id: int, conn_id: Optional[str], chat_id: int):
+    """Цикл онлайн-активности: typing каждые 5 секунд, пока не выключат."""
+    use_aiogram = True
+    try:
+        while True:
+            try:
+                if conn_id and use_aiogram:
+                    await bot.send_chat_action(
+                        chat_id, action=ChatAction.TYPING,
+                        business_connection_id=conn_id,
+                    )
+                elif conn_id:
+                    # Фолбэк на сырой API (если версия aiogram не умеет
+                    # business_connection_id в sendChatAction)
+                    session = get_http()
+                    async with session.post(
+                        f"https://api.telegram.org/bot{BOT_TOKEN}/sendChatAction",
+                        json={
+                            "business_connection_id": conn_id,
+                            "chat_id": chat_id,
+                            "action": "typing",
+                        },
+                        timeout=aiohttp.ClientTimeout(total=10),
+                    ):
+                        pass
+                else:
+                    await bot.send_chat_action(chat_id, action=ChatAction.TYPING)
+            except TypeError as e:
+                # aiogram не принял business_connection_id — переходим на сырой API
+                if conn_id and use_aiogram:
+                    use_aiogram = False
+                    log.warning(f"💡 .online fallback to raw API (TypeError: {e})")
+                    continue
+                log.warning(f"💡 .online tick owner={owner_id}: {e}")
+                await asyncio.sleep(_ONLINE_TICK_SECONDS * 2)
+                continue
+            except TelegramRetryAfter as e:
+                await asyncio.sleep(int(e.retry_after))
+                continue
+            except Exception as e:
+                # Подключение умерло или Telegram не принял действие —
+                # пробуем ещё пару раз, потом отключаемся автоматически.
+                log.warning(f"💡 .online tick owner={owner_id}: {e}")
+                await asyncio.sleep(_ONLINE_TICK_SECONDS * 2)
+                continue
+            await asyncio.sleep(_ONLINE_TICK_SECONDS)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        _online_loops.pop(owner_id, None)
+
+
+async def _online_first_conn_id() -> Optional[str]:
+    """ID первого бизнес-подключения владельца (сырой API — работает на любой версии)."""
+    try:
+        session = get_http()
+        async with session.post(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/getMyBusinessConnections",
+            json={},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            data = await resp.json()
+        if not data.get("ok"):
+            return None
+        conns = (data.get("result") or {}).get("connections") or []
+        if not conns:
+            return None
+        return conns[0].get("id")
+    except Exception as e:
+        log.warning(f"💡 .online getMyBusinessConnections: {e}")
+        return None
+
+
+def _online_stop(owner_id: int):
+    """Выключает онлайн-цикл пользователя (если запущен)."""
+    entry = _online_loops.pop(owner_id, None)
+    if entry:
+        task = entry.get("task")
+        if task and not task.done():
+            task.cancel()
+
+
+async def _online_start(owner_id: int, conn_id: Optional[str], chat_id: int):
+    """Запускает онлайн-цикл (перезапуск без дублей)."""
+    _online_stop(owner_id)
+    task = asyncio.create_task(_online_worker(owner_id, conn_id, chat_id))
+    _online_loops[owner_id] = {"conn_id": conn_id, "chat_id": chat_id, "task": task}
+
+
+async def _online_send_status(conn_id: Optional[str], chat_id: int, msg_id: int, running: bool, owner_id: int):
+    """Сообщение о состоянии онлайн-режима + кнопка «Выключить»."""
+    if running:
+        text = (
+            "💡 <b>ОНЛАЙН ВКЛЮЧЁН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Бот поддерживает онлайн постоянно\n"
+            "◇ Собеседник видит тебя в сети\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Выключить: кнопка ниже 👇\n"
+            "   или команда <code>.offline</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        )
+        kbd = {"inline_keyboard": [[{"text": "🔴 Выключить онлайн", "callback_data": "online_off_btn"}]]}
+    else:
+        text = "◇ Онлайн выключен"
+        kbd = {"inline_keyboard": []}
+    if conn_id:
+        await _business_edit_message(conn_id, chat_id, msg_id, text, reply_markup=kbd)
+    else:
+        try:
+            await bot.edit_message_text(text, chat_id=chat_id, message_id=msg_id, reply_markup=kbd)
+        except Exception:
+            pass
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.online$"))
+async def on_online_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".online")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    await _online_start(owner_id, msg.business_connection_id, msg.chat.id)
+    await _online_send_status(msg.business_connection_id, msg.chat.id, msg.message_id, True, owner_id)
+    log.info(f"💡 .online business owner={owner_id} chat={msg.chat.id}")
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.offline$"))
+async def on_offline_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".offline")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    _online_stop(owner_id)
+    await _online_send_status(msg.business_connection_id, msg.chat.id, msg.message_id, False, owner_id)
+    log.info(f"💡 .offline business owner={owner_id}")
+
+
+@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.online$"), F.chat.type == "private")
+async def on_online_private(msg: Message):
+    """ЛС с ботом: запускаем онлайн через доступное бизнес-подключение."""
+    if not msg.from_user:
+        return
+    uid = msg.from_user.id
+    conn_id = await _online_first_conn_id()
+    if not conn_id:
+        await msg.answer(
+            "◇ <b>.online</b> — не найдено бизнес-подключение.\n"
+            "◇ Напиши команду в ЛС с другом, чтобы включить онлайн там."
+        )
+        return
+    await _online_start(uid, conn_id, msg.chat.id)
+    await _online_send_status(None, msg.chat.id, msg.message_id, True, uid)
+    log.info(f"💡 .online dm user={uid} conn={conn_id}")
+
+
+@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.offline$"), F.chat.type == "private")
+async def on_offline_private(msg: Message):
+    if not msg.from_user:
+        return
+    uid = msg.from_user.id
+    _online_stop(uid)
+    await _online_send_status(None, msg.chat.id, msg.message_id, False, uid)
+    log.info(f"💡 .offline dm user={uid}")
+
+
+@dp.callback_query(F.data == "online_off_btn")
+async def cb_online_off_btn(call: CallbackQuery):
+    """Кнопка «Выключить онлайн» в бизнес-чате."""
+    conn_id = getattr(call, "business_connection_id", None)
+    if not conn_id and call.message:
+        conn_id = getattr(call.message, "business_connection_id", None)
+    if not conn_id or not call.message or not call.message.chat:
+        await call.answer("⛔ Не удалось выключить онлайн", show_alert=True)
+        return
+    owner_id = await _get_owner_id_cached(conn_id, "online_off_btn")
+    if owner_id is None or call.from_user.id != owner_id:
+        await call.answer("⛔ Только владелец может выключить онлайн", show_alert=True)
+        return
+    _online_stop(owner_id)
+    await call.answer("💡 Онлайн выключен", show_alert=False)
+    await _business_edit_message(
+        conn_id, call.message.chat.id, call.message.message_id,
+        (
+            "💡 <b>ОНЛАЙН ВЫКЛЮЧЕН</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Поддержка онлайна <b>остановлена</b>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+        reply_markup={"inline_keyboard": []},
+    )
 
 
 # ── .curs (Business + группы/ЛС) ───────────────────────────────────────
