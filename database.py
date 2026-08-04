@@ -455,3 +455,17 @@ async def count_stats(event_type: str, since_iso: Optional[str] = None) -> int:
     ) as cur:
         return (await cur.fetchone())[0]
 
+async def delete_stats_like(pattern: str) -> int:
+    """Удаляет события bot_stats по LIKE-маске (например 'groq_key%_fail').
+
+    Возвращает количество удалённых записей. Нужно для сброса статистики
+    ошибок API-ключей в админке.
+    """
+    conn = _get_conn()
+    async with _write_lock:
+        cur = await conn.execute(
+            "DELETE FROM bot_stats WHERE event_type LIKE ?", (pattern,)
+        )
+        await conn.commit()
+        return cur.rowcount
+

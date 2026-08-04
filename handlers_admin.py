@@ -113,10 +113,8 @@ def _stat_since(days: int = 0) -> str:
     return start.astimezone(timezone.utc).replace(tzinfo=None).isoformat()
 
 
-@dp.callback_query(F.data == "adm_stats")
-async def cb_adm_stats(call: CallbackQuery):
-    if not _is_admin(call): return
-    await call.answer()
+async def _render_stats() -> tuple[str, InlineKeyboardMarkup]:
+    """Текст статистики + клавиатура (обновить / сбросить ошибки ключей)."""
     today = _stat_since(0)
     week  = _stat_since(6)
     month = _stat_since(29)
@@ -175,13 +173,36 @@ async def cb_adm_stats(call: CallbackQuery):
         f"⟡ Собрано звёзд:  <b>{stars}</b>\n"
         f"✦ Предложений:    <b>{ideas}</b>"
     )
-    await call.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_stats")],
-            [InlineKeyboardButton(text="← Назад", callback_data="adm")],
-        ]),
-    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_stats"),
+            InlineKeyboardButton(text="🔄 Сброс ошибок ключей", callback_data="adm_stats_reset_fails"),
+        ],
+        [InlineKeyboardButton(text="← Назад", callback_data="adm")],
+    ])
+    return text, kb
+
+
+@dp.callback_query(F.data == "adm_stats")
+async def cb_adm_stats(call: CallbackQuery):
+    if not _is_admin(call): return
+    await call.answer()
+    text, kb = await _render_stats()
+    await call.message.edit_text(text, reply_markup=kb)
+
+
+@dp.callback_query(F.data == "adm_stats_reset_fails")
+async def cb_adm_stats_reset_fails(call: CallbackQuery):
+    """Сброс ошибок всех API-ключей: дальше в статистике видно только новые."""
+    if not _is_admin(call): return
+    n1 = await db.delete_stats_like("groq_key%_fail")
+    n2 = await db.delete_stats_like("whisper_fail")
+    await call.answer(f"🔄 Ошибки сброшены · удалено: {n1 + n2}", show_alert=False)
+    text, kb = await _render_stats()
+    try:
+        await call.message.edit_text(text, reply_markup=kb)
+    except Exception as e:
+        log.error(f"stats reset render: {e}")
 
 
 @dp.callback_query(F.data == "adm_ideas")
