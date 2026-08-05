@@ -1,24 +1,24 @@
-"""🎨 .draw — генерация картинок по описанию (Gemini 2.5 Flash Image / Nano Banana).
+"""🎨 .draw — генерация картинок по описанию (Pollinations.ai, модель Flux).
 
-Отдельная команда, работает ТОЛЬКО на генерацию изображений: GEMINI_API_KEY
-используется исключительно здесь и нигде больше в боте.
+Бесплатный генератор, который реально работает: регистрация не нужна
+(анонимный режим), а бесплатная регистрация на auth.pollinations.ai даёт
+токен — убирает водяной знак и повышает лимиты (1 запрос / 5 сек вместо
+1 / 15 сек). Токен POLLINATIONS_TOKEN используется ТОЛЬКО здесь.
 
 Лимит: 7 картинок в день на человека (счётчик в БД, переживает рестарты).
 Гонка исключена per-user блокировкой: проверка лимита → генерация → инкремент
-выполняются под asyncio.Lock, поэтому два параллельных .draw одного юзера не
-смогут обойти лимит.
+выполняются под asyncio.Lock.
 
 После исчерпания лимита бот отвечает тёплым текстом — без злости, с намёком
 на совесть и напоминанием, что бот бесплатен для всех.
 
-Формат API проверен: POST /v1beta/models/gemini-2.5-flash-image:generateContent,
-ключ в заголовке x-goog-api-key, картинка возвращается base64 в
-candidates[0].content.parts[*].inlineData.data.
+API (проверено по официальной документации Pollinations):
+GET https://image.pollinations.ai/prompt/{prompt}?width=&height=&model=flux&private=true&safe=true[&token=...&nologo=true]
 """
 import asyncio
-import base64
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote
 
 import aiohttp
 from aiogram import F
@@ -31,15 +31,12 @@ from business_api import (
     _business_edit_message,
     _get_owner_id_cached,
 )
-from core import GEMINI_API_KEY, bot, dp, get_http, log
+from core import POLLINATIONS_TOKEN, bot, dp, get_http, log
 from functions import LINE, MSK
 
 DRAW_DAILY_LIMIT = 7
-DRAW_MODEL = "gemini-2.5-flash-image"
-DRAW_API_URL = (
-    f"https://generativelanguage.googleapis.com/v1beta/models/"
-    f"{DRAW_MODEL}:generateContent"
-)
+DRAW_MODEL = "flux"
+DRAW_API_URL = "https://image.pollinations.ai/prompt"
 
 # Per-user блокировки: сериализуют «проверка → генерация → инкремент»,
 # чтобы параллельные .draw одного юзера не обошли дневной лимит.
@@ -57,7 +54,7 @@ DRAW_HOWTO = (
     "   · <code>.draw неоновый город, киберпанк</code>\n"
     "   · <code>.draw логотип для бренда, минимализм</code>\n\n"
     f"◇ Лимит: <b>{DRAW_DAILY_LIMIT} картинок в день</b> на человека · бесплатно\n"
-    "◇ Модель: Gemini 2.5 Flash Image (Nano Banana)"
+    "◇ Модель: Flux (Pollinations.ai)"
 )
 
 DRAW_LIMIT_TEXT = (
@@ -68,7 +65,7 @@ DRAW_LIMIT_TEXT = (
     "◇ Завтра лимит снова будет 7 — приходи, нарисуем ещё.\n\n"
     f"<code>{LINE}</code>\n"
     "◆ Quiet Mod <b>бесплатен для всех</b> — без подписок и VIP.\n"
-    "◇ Картинки рисует дорогая нейросеть Gemini — её бесплатные\n"
+    "◇ Картинки рисует бесплатная нейросеть — её бесплатные\n"
     "   ресурсы ограничены, поэтому 7 в день на человека.\n"
     "◇ Это не так уж и плохо, правда? Будь добр к проекту —\n"
     "   и к совести. Мы стараемся для тебя бесплатно 👁️"
@@ -91,51 +88,57 @@ async def _draw_used(uid: int) -> int:
     return await db.get_image_usage(uid, _draw_day())
 
 
-async def _gemini_generate(prompt: str) -> tuple[Optional[bytes], Optional[str]]:
-    """Генерация картинки через Gemini. (байты PNG/JPEG, текст ошибки или None)."""
-    if not (GEMINI_API_KEY or "").strip():
-        return None, "🔑 Не настроен ключ Gemini — добавь <code>GEMINI_API_KEY</code> в переменные окружения."
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]},
+async def _pollinations_generate(prompt: str) -> tuple[Optional[bytes], Optional[str]]:
+    """Генерация картинки через Pollinations.ai (Flux). (байты JPEG, текст ошибки)."""
+    params: dict[str, str] = {
+        "width": "1024",
+        "height": "1024",
+        "model": DRAW_MODEL,
+        "private": "true",   # не светить генерации в публичном фиде
+        "safe": "true",      # строгий фильтр запрещённого контента
     }
-    headers = {
-        "x-goog-api-key": GEMINI_API_KEY,
-        "Content-Type": "application/json",
-    }
-    try:
-        session = get_http()
-        async with session.post(
-            DRAW_API_URL,
-            json=payload,
-            headers=headers,
-            timeout=aiohttp.ClientTimeout(total=60),
-        ) as resp:
-            if resp.status != 200:
-                body = await resp.text()
-                log.warning(f"🎨 Gemini draw status={resp.status}: {body[:200]}")
+    token = (POLLINATIONS_TOKEN or "").strip()
+    if token:
+        params["token"] = token
+        params["nologo"] = "true"   # убрать водяной знак (только с токеном)
+    else:
+        params["referrer"] = "quiet-mod-bot"
+    url = f"{DRAW_API_URL}/{quote(prompt[:500])}"
+    # Анонимный тариф — 1 запрос / 15 сек ГЛОБАЛЬНО (на IP): при 429 один раз
+    # ждём и повторяем, чтобы несколько пользователей подряд не ловили отказ.
+    for attempt in (1, 2):
+        try:
+            session = get_http()
+            async with session.get(
+                url,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
                 if resp.status == 429:
-                    return None, "Генератор перегружен — подожди немного и попробуй ещё раз."
-                if resp.status == 400:
-                    return None, "Gemini отклонил запрос — возможно, тема запрещена. Переформулируй описание."
-                return None, "Не получилось сгенерировать картинку — попробуй ещё раз."
-            data = await resp.json()
-    except Exception as e:
-        log.warning(f"🎨 Gemini draw HTTP: {e}")
-        return None, "Не получилось сгенерировать картинку — попробуй ещё раз."
-    try:
-        candidate = (data.get("candidates") or [{}])[0] or {}
-        finish = (candidate.get("finishReason") or "").upper()
-        parts = ((candidate.get("content") or {}).get("parts")) or []
-        for part in parts:
-            inline = (part or {}).get("inlineData") or {}
-            if inline.get("data"):
-                return base64.b64decode(inline["data"]), None
-        if "SAFETY" in finish or "PROHIBITED" in finish:
-            return None, "Gemini отклонил картинку — содержание запроса не прошло модерацию. Переформулируй описание."
-    except Exception as e:
-        log.warning(f"🎨 Gemini draw parse: {e}")
-    return None, "Gemini не вернул картинку — попробуй переформулировать запрос."
+                    body = await resp.text()
+                    log.warning(f"🎨 Pollinations draw 429 (attempt {attempt}): {body[:200]}")
+                    if attempt == 1:
+                        await asyncio.sleep(6 if token else 16)
+                        continue
+                    return None, "Генератор перегружен — попробуй через пару минут."
+                if resp.status != 200:
+                    body = await resp.text()
+                    log.warning(f"🎨 Pollinations draw status={resp.status}: {body[:200]}")
+                    if resp.status == 400:
+                        return None, "Запрос отклонён — возможно, тема запрещена. Переформулируй описание."
+                    return None, "Не получилось сгенерировать картинку — попробуй ещё раз."
+                data = await resp.read()
+                if not data or len(data) < 1000:
+                    log.warning(f"🎨 Pollinations draw empty body ({len(data or b'')} bytes)")
+                    return None, "Генератор не вернул картинку — попробуй ещё раз."
+                return data, None
+        except Exception as e:
+            log.warning(f"🎨 Pollinations draw HTTP: {e}")
+            if attempt == 1:
+                await asyncio.sleep(3)
+                continue
+            return None, "Не получилось сгенерировать картинку — попробуй ещё раз."
+    return None, "Не получилось сгенерировать картинку — попробуй ещё раз."
 
 
 # ── Бизнес-чат: .draw описание ────────────────────────────────────────
@@ -166,7 +169,7 @@ async def on_draw_inline(msg: Message):
         )
         if not ok:
             return
-        img, err = await _gemini_generate(prompt)
+        img, err = await _pollinations_generate(prompt)
         if img is None:
             await _business_edit_message(
                 msg.business_connection_id, msg.chat.id, msg.message_id, err
@@ -176,7 +179,7 @@ async def on_draw_inline(msg: Message):
         try:
             await bot.send_photo(
                 msg.chat.id,
-                photo=BufferedInputFile(img, filename="draw.png"),
+                photo=BufferedInputFile(img, filename="draw.jpg"),
                 business_connection_id=msg.business_connection_id,
             )
             try:
@@ -207,7 +210,7 @@ async def on_draw_dm(msg: Message):
             await msg.answer(DRAW_LIMIT_TEXT)
             return
         thinking = await msg.answer("🎨 Рисую…")
-        img, err = await _gemini_generate(prompt)
+        img, err = await _pollinations_generate(prompt)
         try:
             await thinking.delete()
         except Exception:
@@ -217,7 +220,7 @@ async def on_draw_dm(msg: Message):
             return
         await db.increment_image_usage(uid, _draw_day())
         try:
-            await bot.send_photo(msg.chat.id, photo=BufferedInputFile(img, filename="draw.png"))
+            await bot.send_photo(msg.chat.id, photo=BufferedInputFile(img, filename="draw.jpg"))
         except Exception as e:
             log.error(f"🎨 .draw dm send: {e}")
             await msg.answer("😔 Картинка готова, но не смог её отправить — попробуй ещё раз.")
@@ -242,7 +245,7 @@ async def on_draw_group(msg: Message):
             await msg.reply(DRAW_LIMIT_TEXT)
             return
         thinking = await msg.reply("🎨 Рисую…")
-        img, err = await _gemini_generate(prompt)
+        img, err = await _pollinations_generate(prompt)
         try:
             await thinking.delete()
         except Exception:
@@ -252,7 +255,7 @@ async def on_draw_group(msg: Message):
             return
         await db.increment_image_usage(uid, _draw_day())
         try:
-            await bot.send_photo(msg.chat.id, photo=BufferedInputFile(img, filename="draw.png"))
+            await bot.send_photo(msg.chat.id, photo=BufferedInputFile(img, filename="draw.jpg"))
         except Exception as e:
             log.error(f"🎨 .draw group send: {e}")
             await msg.reply("😔 Картинка готова, но не смог её отправить — попробуй ещё раз.")
