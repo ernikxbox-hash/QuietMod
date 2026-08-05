@@ -75,6 +75,17 @@ def sub_kb() -> InlineKeyboardMarkup:
     ])
 
 
+def set_channel_id(chat_id: int):
+    """Зафиксировать числовой ID канала (когда бот добавлен в него админом).
+
+    Вызывается из on_my_chat_member: бот сам запоминает канал гейта, как
+    только его туда добавили — без переменных окружения и перезапусков.
+    """
+    global _CHANNEL_ID
+    _CHANNEL_ID = chat_id
+    log.info(f"🛡 Гейт: канал зафиксирован автоматически (ID: {_CHANNEL_ID})")
+
+
 async def _resolve_channel() -> Optional[int]:
     """Числовой ID канала по юзернейму (с кэшем). None — канал недоступен.
 

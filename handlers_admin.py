@@ -15,7 +15,8 @@ from html import escape as html_escape
 
 import database as db
 from business_api import _business_edit_message, _business_send_message_ex
-from core import ADMIN_ID, GROQ_API_KEYS, S, bot, dp, log
+from core import ADMIN_ID, CHANNEL_USERNAME, GROQ_API_KEYS, S, bot, dp, log
+from handlers_gate import set_channel_id
 from functions import (
     LINE,
     CMD_FEATURES,
@@ -363,6 +364,11 @@ async def on_idea_input(msg: Message, state: FSMContext):
 async def on_my_chat_member(update: ChatMemberUpdated):
     chat = update.chat
     new_status = update.new_chat_member.status
+    is_gate_channel = (
+        chat.type == "channel"
+        and CHANNEL_USERNAME
+        and (getattr(chat, "username", "") or "").lower() == CHANNEL_USERNAME.lower()
+    )
     if new_status in ("member", "administrator", "restricted"):
         was_added = new_status != "restricted" or update.old_chat_member.status in ("left", "kicked")
         if was_added or new_status == "administrator" or new_status == "member":
@@ -371,9 +377,15 @@ async def on_my_chat_member(update: ChatMemberUpdated):
                 log.info(f"📌 Бот ограничен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id}) — оставлен в списке")
             else:
                 log.info(f"📌 Бот добавлен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
+            # 🛡 Бота добавили именно в канал гейта — фиксируем ID сразу
+            if is_gate_channel:
+                set_channel_id(chat.id)
+                log.info(f"🛡 Гейт: это канал @{CHANNEL_USERNAME} — ID зафиксирован, подписка заработала")
     elif new_status in ("left", "kicked"):
         await db.remove_bot_chat(chat.id)
         log.info(f"📌 Бот удалён из {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
+        if is_gate_channel:
+            log.warning(f"🛡 Гейт: бота удалили из канала @{CHANNEL_USERNAME} — доступ временно открыт!")
 
 
 @dp.callback_query(F.data == "adm_broadcast_groups")
