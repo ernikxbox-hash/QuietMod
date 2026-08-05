@@ -1,7 +1,7 @@
 import asyncio
 import aiosqlite
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 DB_PATH = "data/bot.db"
@@ -474,6 +474,126 @@ async def delete_stats_like(pattern: str) -> int:
     async with _write_lock:
         cur = await conn.execute(
             "DELETE FROM bot_stats WHERE event_type LIKE ?", (pattern,)
+        )
+        await conn.commit()
+        return cur.rowcount
+
+
+# ─── .sled (отслеживание изменений профиля) ───────────────────────
+async def add_sled_target(uid: int, target: dict) -> bool:
+    """Добавляет цель слежки. False — уже есть."""
+    conn = _get_conn()
+    now = datetime.now().isoformat()
+    async with _write_lock:
+        try:
+            await conn.execute("""
+                INSERT INTO sled_targets
+                  (user_id, target_id, target_username, target_name, added_at, last_check)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (uid, target["id"], target.get("username", "") or "",
+                  target.get("full_name", "") or "", now, now))
+            await conn.commit()
+            return True
+        except Exception:
+            return False
+
+async def remove_sled_target(uid: int, target_id: int) -> bool:
+    conn = _get_conn()
+    async with _write_lock:
+        cur = await conn.execute(
+            "DELETE FROM sled_targets WHERE user_id=? AND target_id=?",
+            (uid, target_id),
+        )
+        await conn.commit()
+        return cur.rowcount > 0
+
+async def count_sled_targets(uid: int) -> int:
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT COUNT(*) FROM sled_targets WHERE user_id=?", (uid,)
+    ) as cur:
+        return (await cur.fetchone())[0]
+
+async def get_user_sled_targets(uid: int) -> list[dict]:
+    conn = _get_conn()
+    async with conn.execute("""
+        SELECT target_id, target_username, target_name, added_at, last_check,
+               last_name, last_username, last_bio, last_photo_id, last_photo_count
+        FROM sled_targets WHERE user_id=? ORDER BY added_at
+    """, (uid,)) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+async def get_all_sled_targets_with_state() -> list:
+    """Все (uid, target) для фоновой задачи."""
+    conn = _get_conn()
+    out = []
+    async with conn.execute("""
+        SELECT user_id, target_id, target_username, target_name,
+               last_name, last_username, last_bio, last_photo_id, last_photo_count
+        FROM sled_targets
+    """) as cur:
+        rows = await cur.fetchall()
+    for r in rows:
+        d = dict(r)
+        out.append((d.pop("user_id"), d))
+    return out
+
+async def update_sled_target_state(uid: int, target_id: int, state: dict):
+    conn = _get_conn()
+    now = datetime.now().isoformat()
+    async with _write_lock:
+        await conn.execute("""
+            UPDATE sled_targets SET
+                last_check       = ?,
+                last_name        = ?,
+                last_username    = ?,
+                last_bio         = ?,
+                last_photo_id    = ?,
+                last_photo_count = ?
+            WHERE user_id=? AND target_id=?
+        """, (
+            now,
+            state.get("name", "") or "",
+            state.get("username", "") or "",
+            state.get("bio", "") or "",
+            state.get("last_photo_id", "") or "",
+            int(state.get("photo_count", 0) or 0),
+            uid, target_id,
+        ))
+        await conn.commit()
+
+async def save_sled_events(uid: int, target_id: int, events: list):
+    conn = _get_conn()
+    now = datetime.now().isoformat()
+    if not events:
+        return
+    async with _write_lock:
+        await conn.executemany("""
+            INSERT INTO sled_events
+              (user_id, target_id, event_type, old_value, new_value, file_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, [(
+            uid, target_id, e["event_type"],
+            e.get("old_value") or "", e.get("new_value") or "",
+            e.get("file_id"), now,
+        ) for e in events])
+        await conn.commit()
+
+async def get_sled_events(uid: int, target_id: int, limit: int = 30) -> list[dict]:
+    conn = _get_conn()
+    async with conn.execute("""
+        SELECT * FROM sled_events
+        WHERE user_id=? AND target_id=?
+        ORDER BY id DESC LIMIT ?
+    """, (uid, target_id, limit)) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+async def purge_old_sled_events(days: int = 30) -> int:
+    conn = _get_conn()
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    async with _write_lock:
+        cur = await conn.execute(
+            "DELETE FROM sled_events WHERE created_at < ?", (cutoff,)
         )
         await conn.commit()
         return cur.rowcount

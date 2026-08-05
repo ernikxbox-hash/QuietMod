@@ -583,11 +583,18 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".quote знание — сила",
         "note": "Работает в группах и личных чатах (Business)"
     },
+    "sled": {
+        "title": "🛰 .sled",
+        "desc": "Следи за изменениями профиля — имя, юзернейм, bio, аватарка. Макс 3 цели на пользователя.",
+        "usage": ".sled @username · .sled (список) · .unsled @username · .infosled @username",
+        "example": ".sled @durov",
+        "note": "Только в ЛС. Опрос каждые 5 мин. Онлайн/время в сети НЕ отслеживаются (ограничение Bot API)"
+    },
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
     cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka",
-                "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
+                "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]

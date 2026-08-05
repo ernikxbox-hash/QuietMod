@@ -46,6 +46,7 @@ async def main():
     except Exception:
         pass
     purge_task = asyncio.create_task(_purge_loop())
+    sled_task = asyncio.create_task(_sled_loop())
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
     def _request_stop(*_):
@@ -66,10 +67,11 @@ async def main():
         )
     finally:
         purge_task.cancel()
+        sled_task.cancel()
         if not polling_task.done():
             await dp.stop_polling()
             polling_task.cancel()
-        for t in (purge_task, polling_task):
+        for t in (purge_task, sled_task, polling_task):
             try:
                 await t
             except (asyncio.CancelledError, Exception):
