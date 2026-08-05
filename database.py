@@ -321,6 +321,14 @@ async def count_messages(owner_id: int) -> int:
         "SELECT COUNT(*) FROM messages WHERE owner_id=?", (owner_id,)
     ) as cur:
         return (await cur.fetchone())[0]
+async def count_messages_by_sender(owner_id: int, sender_id: int) -> int:
+    """Сколько сообщений конкретного собеседника лежит в архиве владельца."""
+    db = _get_conn()
+    async with db.execute(
+        "SELECT COUNT(*) FROM messages WHERE owner_id=? AND sender_id=?",
+        (owner_id, sender_id),
+    ) as cur:
+        return (await cur.fetchone())[0]
 async def search_messages(owner_id: int, query: str) -> list[dict]:
     db = _get_conn()
     async with db.execute("""

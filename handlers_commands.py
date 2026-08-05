@@ -801,10 +801,16 @@ def _info_reg_year(uid: int) -> Optional[str]:
     return "2025+"  # очень новые аккаунты (компактные ID)
 
 
-async def _info_card(uid: int, full_name: str, username: str, bio: str = "") -> str:
-    """HTML-карточка собеседника для .info."""
-    name = html_escape(full_name or "Неизвестно")
-    uname = html_escape((username or "").lstrip("@"))
+async def _info_card(uid: int, data: dict) -> str:
+    """HTML-карточка собеседника для .info.
+
+    data — результат _info_by_user_id: id, full_name, last_name, username,
+    bio, is_premium, emoji_status, has_private_forwards, has_restricted_voice,
+    photo_count, archived (опционально). Все поля читаются через getattr с
+    дефолтами, поэтому отсутствующие строки просто не выводятся.
+    """
+    name = html_escape(data.get("full_name") or "Неизвестно")
+    uname = html_escape((data.get("username") or "").lstrip("@"))
     year = _info_reg_year(uid)
     lines = [
         "ℹ️ <b>ИНФО О СОБЕСЕДНИКЕ</b>",
@@ -812,11 +818,31 @@ async def _info_card(uid: int, full_name: str, username: str, bio: str = "") -> 
         "",
         f"◇ <b>Имя:</b> {name}",
     ]
+    last_name = (data.get("last_name") or "").strip()
+    if last_name:
+        lines.append(f"◇ <b>Фамилия:</b> {html_escape(last_name)}")
     if uname:
         lines.append(f"◇ <b>Username:</b> <a href=\"https://t.me/{uname}\">@{uname}</a>")
     lines.append(f"◇ <b>ID:</b> <code>{uid}</code>")
-    if bio:
-        lines.append(f"◇ <b>Bio:</b> {html_escape(bio)}")
+    if uid:
+        lines.append(f"◇ <b>Профиль:</b> <a href=\"tg://user?id={uid}\">открыть в Telegram</a>")
+    if data.get("bio"):
+        lines.append(f"◇ <b>Bio:</b> {html_escape(data['bio'])}")
+    features = []
+    if data.get("is_premium"):
+        features.append("👑 Premium")
+    if data.get("emoji_status"):
+        features.append("🌟 Кастомный статус")
+    if data.get("has_private_forwards"):
+        features.append("🔒 Пересылка запрещена")
+    if data.get("has_restricted_voice"):
+        features.append("🔇 Голосовые и видео ограничены")
+    if features:
+        lines.append("◇ <b>Особенности:</b> " + " · ".join(features))
+    if data.get("photo_count") is not None:
+        lines.append(f"◇ <b>Фото в профиле:</b> {data['photo_count']}")
+    if data.get("archived") is not None:
+        lines.append(f"◇ <b>В архиве:</b> {data['archived']}")
     if year:
         lines.append(
             f"◇ <b>Регистрация:</b> примерно {year}\n"
@@ -830,17 +856,45 @@ async def _info_card(uid: int, full_name: str, username: str, bio: str = "") -> 
     return "\n".join(lines)
 
 
-async def _info_by_user_id(user_id: int) -> Optional[str]:
-    """Собирает карточку по user_id: имя/username из getChat, bio если доступно."""
+async def _info_by_user_id(user_id: int) -> Optional[dict]:
+    """Собирает данные о пользователе: getChat + фото профиля.
+
+    Возвращает dict (id, full_name, last_name, username, bio, флаги приватности,
+    photo_count, last_photo) или None, если getChat не дался. Все новые поля
+    читаются через getattr — на старой версии aiogram строки просто не выводятся.
+    """
     try:
         chat = await bot.get_chat(user_id)
     except Exception as e:
         log.warning(f"ℹ️ .info getChat uid={user_id}: {e}")
         return None
-    full_name = getattr(chat, "full_name", None) or getattr(chat, "title", None) or ""
-    username = getattr(chat, "username", None) or ""
-    bio = getattr(chat, "bio", None) or ""
-    return await _info_card(user_id, full_name, username, bio)
+    data: dict = {
+        "id": getattr(chat, "id", None) or user_id,
+        "full_name": getattr(chat, "full_name", None) or getattr(chat, "title", None) or "",
+        "last_name": getattr(chat, "last_name", None) or "",
+        "username": getattr(chat, "username", None) or "",
+        "bio": getattr(chat, "bio", None) or "",
+        "is_premium": bool(getattr(chat, "is_premium", False)),
+        "emoji_status": bool(getattr(chat, "emoji_status_custom_emoji_id", None)),
+        "has_private_forwards": bool(getattr(chat, "has_private_forwards", False)),
+        "has_restricted_voice": bool(
+            getattr(chat, "has_restricted_voice_and_video_messages", False)
+        ),
+        "photo_count": 0,
+        "last_photo": None,
+    }
+    # getUserProfilePhotos принимает ТОЛЬКО числовой user_id, а не username:
+    # используем id, полученный из getChat (data["id"] всегда число).
+    numeric_id = data["id"] or user_id
+    try:
+        photos = await bot.get_user_profile_photos(numeric_id, limit=1)
+        data["photo_count"] = photos.total_count
+        if photos.total_count > 0 and photos.photos:
+            # photos[0] — последнее фото, [-1] — его самое крупное разрешение
+            data["last_photo"] = photos.photos[0][-1].file_id
+    except Exception as e:
+        log.warning(f"ℹ️ .info photos uid={numeric_id}: {e}")
+    return data
 
 
 @dp.business_message(F.text.regexp(r"(?i)^\.info(\s+.+)?$"))
@@ -867,21 +921,67 @@ async def on_info_inline(msg: Message):
         return
     if target.isdigit():
         user_id = int(target)
-        card = await _info_by_user_id(user_id)
+        info = await _info_by_user_id(user_id)
     else:
         # по username: getChat умеет резолвить @username → id
-        card = await _info_by_user_id(target)
-    if card is None:
+        info = await _info_by_user_id(target)
+    if info is None:
         await _business_edit_message(
             msg.business_connection_id, msg.chat.id, msg.message_id,
             "◇ <b>.info</b> — не удалось получить данные.\n◇ Проверь: <code>.info @username</code> или <code>.info id</code>",
         )
         return
+    user_id = info.get("id") or 0
+    # Сколько сообщений этого человека в архиве владельца (есть только в business)
+    if user_id and user_id != owner_id:
+        info["archived"] = await db.count_messages_by_sender(owner_id, user_id)
+    card = await _info_card(user_id, info)
     await _business_edit_ai_html(
         msg.business_connection_id, msg.chat.id, msg.message_id,
         prefix="", answer=card,
     )
     log.info(f"ℹ️ .info business owner={owner_id} target={target}")
+
+
+@dp.message(StateFilter("*"), F.text.regexp(r"(?i)^\.info(\s+.+)?$"), F.chat.type == "private")
+async def on_info_dm(msg: Message):
+    """ЛС с ботом: .info @username / .info id — карточка + фото профиля."""
+    if not msg.from_user:
+        return
+    raw_text = msg.text or ""
+    body = raw_text[5:].strip() if len(raw_text) >= 5 else ""
+    target = body.lstrip("@").strip()
+    if not target:
+        await msg.answer(
+            "◇ <b>.info</b> — укажи собеседника:\n"
+            "   · <code>.info @username</code>\n"
+            "   · <code>.info id</code>"
+        )
+        return
+    if target.isdigit():
+        info = await _info_by_user_id(int(target))
+    else:
+        info = await _info_by_user_id(target)
+    if info is None:
+        await msg.answer(
+            "◇ <b>.info</b> — не удалось получить данные.\n"
+            "◇ Проверь: <code>.info @username</code> или <code>.info id</code>"
+        )
+        return
+    user_id = info.get("id") or 0
+    card = await _info_card(user_id, info)
+    await _reply_ai_html(msg, prefix="", answer=card)
+    # В ЛС с ботом прикладываем последнее фото профиля (в чатах не спамим)
+    last_photo = info.get("last_photo")
+    if last_photo:
+        try:
+            await bot.send_photo(
+                msg.chat.id, last_photo,
+                caption="📸 Последнее фото профиля",
+            )
+        except Exception as e:
+            log.warning(f"ℹ️ .info send photo: {e}")
+    log.info(f"ℹ️ .info dm user={msg.from_user.id} target={target}")
 
 
 @dp.message(F.text.regexp(r"(?i)^\.info(\s+.+)?$"), F.chat.type.in_({"group", "supergroup", "channel"}))
@@ -904,14 +1004,16 @@ async def on_info_group(msg: Message):
     await db.upsert_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name or "")
     await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
     if target.isdigit():
-        card = await _info_by_user_id(int(target))
+        info = await _info_by_user_id(int(target))
     else:
-        card = await _info_by_user_id(target)
-    if card is None:
+        info = await _info_by_user_id(target)
+    if info is None:
         await msg.reply(
             "◇ <b>.info</b> — не удалось получить данные.\n◇ Проверь: <code>.info @username</code> или <code>.info id</code>"
         )
         return
+    user_id = info.get("id") or 0
+    card = await _info_card(user_id, info)
     await _reply_ai_html(msg, prefix="", answer=card)
     log.info(f"ℹ️ .info group chat={msg.chat.id} target={target}")
 

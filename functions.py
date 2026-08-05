@@ -489,10 +489,10 @@ CMD_FEATURES: dict[str, dict] = {
     },
     "info": {
         "title": "ℹ️ .info",
-        "desc": "Показывает всё о собеседнике: имя, username, ID, bio и примерную дату регистрации в Telegram.",
+        "desc": "Карточка собеседника: имя, username, ID, bio, Premium, настройки приватности, фото профиля и примерная дата регистрации в Telegram.",
         "usage": ".info · .info @username · .info id",
         "example": ".info · .info @friend",
-        "note": "В ЛС с ботом (Business) показывает собеседника · в группе — ответь на сообщение или укажи @username"
+        "note": "В ЛС с ботом: .info @username — пришлёт и фото профиля · в бизнес-чате без аргумента — собеседник · в группе — ответь на сообщение или укажи @username"
     },
     "curs": {
         "title": "💱 .curs",
