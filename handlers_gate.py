@@ -23,11 +23,10 @@ from html import escape as html_escape
 from typing import Optional
 
 from aiogram import BaseMiddleware, F
-from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from business_api import _get_owner_id_cached
-from core import ADMIN_ID, BOT_USERNAME, CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
+from core import ADMIN_ID, BOT_USERNAME, CHANNEL_ID, CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
 from functions import LINE, home_msg, home_text_for, kb_main
 
 _SUB_ERR_TTL_SECONDS = 30      # негативный кэш ошибки API: повторно не проверяем 30 сек
@@ -85,6 +84,14 @@ async def _resolve_channel() -> Optional[int]:
     global _CHANNEL_ID
     if _CHANNEL_ID is not None:
         return _CHANNEL_ID
+    # Прямой числовой ID из env (CHANNEL_ID) — надёжнее юзернейма, если
+    # у канала сменится юзернейм или бот не может его разрешить.
+    if CHANNEL_ID:
+        try:
+            _CHANNEL_ID = int(CHANNEL_ID)
+            return _CHANNEL_ID
+        except ValueError:
+            pass
     if not CHANNEL_USERNAME.strip():
         return None
     try:
@@ -191,9 +198,12 @@ async def startup_check():
         await _notify_admin_gate_misconfig("бот не найден в канале")
 
 
-@dp.message(Command("gate"))
+@dp.message(F.text.regexp(r"(?i)^[./]gate(\s+.*)?$"))
 async def cmd_gate(msg: Message):
-    """Админ-диагностика гейта: .gate — статус; .gate <ID|@user> — живая проверка юзера."""
+    """Админ-диагностика гейта: .gate — статус; .gate <ID|@user> — живая проверка юзера.
+
+    Стиль команд бота — с точкой (.ramka, .info), поэтому ловим и .gate, и /gate.
+    """
     if not msg.from_user or msg.from_user.id != ADMIN_ID:
         return
     lines = [f"🛡 <b>Гейт подписки</b>\n{LINE}"]

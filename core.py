@@ -39,8 +39,11 @@ RAMKA_URL = _get_env("RAMKA_URL")
 # 🛡 Гейт подписки: доступ к боту — только подписчикам канала.
 # CHANNEL_USERNAME — юзернейм канала БЕЗ @ (пустая строка = гейт выключен).
 # CHANNEL_URL — ссылка, на которую ведёт кнопка «Подписаться на канал».
+# CHANNEL_ID — (необязательно) числовой ID канала (например -1004482144931):
+# надёжнее юзернейма — не зависит от смены @username.
 CHANNEL_USERNAME = _get_env("CHANNEL_USERNAME", "Official_QuietMod").lstrip("@").strip()
 CHANNEL_URL = _get_env("CHANNEL_URL", "https://t.me/Official_QuietMod").strip()
+CHANNEL_ID = _get_env("CHANNEL_ID", "").strip()
 # Единая модель для всего бота: флагман Groq (120B, Production) — дешевле и быстрее
 # llama-3.3-70b (задепрекейчена 16.08.26). Groq сам рекомендует её как замену.
 # Распознавание фото ОТКЛЮЧЕНО: llama-4-maverick (09.03.26), llama-4-scout (17.07.26)
