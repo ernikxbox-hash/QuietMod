@@ -401,9 +401,9 @@ async def _ramka_load_png():
     Неудачные попытки тоже запоминаются на 5 минут — битая ссылка не будет
     тормозить каждый вызов .ramka сетевым запросом.
     """
+    global _RAMKA_PNG, _RAMKA_PNG_TS, _RAMKA_PNG_FAIL_TS, _RAMKA_URL_EMPTY_LOGGED
     url = RAMKA_URL.strip()
     if not url:
-        global _RAMKA_URL_EMPTY_LOGGED
         if not _RAMKA_URL_EMPTY_LOGGED:
             _RAMKA_URL_EMPTY_LOGGED = True
             log.info("ramka: RAMKA_URL пуста — рисую рамку кодом (барочный стиль)")
