@@ -4,6 +4,7 @@ import database as db
 from core import ADMIN_ID, RAMKA_URL, bot, close_http, dp, log
 from handlers_gate import startup_check
 from tasks import _purge_loop
+from handlers_sled import _sled_loop
 import handlers
 
 async def _sync_bot_chats():
