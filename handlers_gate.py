@@ -19,13 +19,15 @@
   а при старте админу приходит уведомление, если бота нет в канале.
 """
 import time
+from html import escape as html_escape
 from typing import Optional
 
 from aiogram import BaseMiddleware, F
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from business_api import _get_owner_id_cached
-from core import CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
+from core import ADMIN_ID, CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
 from functions import LINE, home_msg, home_text_for, kb_main
 
 _SUB_ERR_TTL_SECONDS = 30      # негативный кэш ошибки API: повторно не проверяем 30 сек
@@ -120,6 +122,58 @@ async def check_subscription_status(uid: int, fresh: bool = False) -> Optional[b
 async def check_subscription(uid: int, fresh: bool = False) -> bool:
     """Bool-обёртка для middleware и /start: None (ошибка API) = доступ открыт."""
     return (await check_subscription_status(uid, fresh=fresh)) is not False
+
+
+@dp.message(Command("gate"))
+async def cmd_gate(msg: Message):
+    """Админ-диагностика гейта: .gate — статус; .gate <ID|@user> — живая проверка юзера."""
+    if not msg.from_user or msg.from_user.id != ADMIN_ID:
+        return
+    lines = [f"🛡 <b>Гейт подписки</b>\n{LINE}"]
+    if not CHANNEL_USERNAME.strip():
+        lines.append("◇ Канал: <b>не задан</b> (CHANNEL_USERNAME) — гейт выключен")
+    else:
+        lines.append(f"◇ Канал: @{CHANNEL_USERNAME}")
+        lines.append(f"◇ Ссылка: {CHANNEL_URL}")
+        try:
+            chat = await bot.get_chat(CHANNEL_USERNAME)
+            lines.append(f"◇ Название: «{getattr(chat, 'title', '?')}» (ID: {chat.id})")
+        except Exception as e:
+            lines.append(f"◇ Название: не получилось — {str(e)[:80]}")
+        try:
+            me = await bot.get_chat_member(CHANNEL_USERNAME, bot.id)
+            lines.append(f"◇ Бот в канале: <b>{me.status}</b>")
+        except Exception as e:
+            lines.append(f"◇ Бот в канале: <b>НЕТ</b> — {str(e)[:80]}")
+    parts = (msg.text or "").split()
+    if len(parts) > 1:
+        target = parts[1].lstrip("@")
+        uid: Optional[int] = None
+        if target.isdigit():
+            uid = int(target)
+        else:
+            try:
+                chat = await bot.get_chat(target)
+                uid = chat.id
+            except Exception:
+                pass
+        if uid is None:
+            lines.append(f"◇ Юзер <code>{target}</code> не найден — укажи числовой ID")
+        else:
+            status = await check_subscription_status(uid, fresh=True)
+            if status is True:
+                verdict = "✅ подписан — доступ есть"
+            elif status is False:
+                verdict = "❌ НЕ подписан — доступ закрыт"
+            else:
+                verdict = "⚠️ проверить не удалось (сбой API) — доступ открыт"
+            lines.append(f"◇ Проверка <code>{html_escape(target)}</code> (ID {uid}): {verdict}")
+    else:
+        lines.append(f"{LINE}\n◇ <code>.gate 1933015948</code> — проверить конкретного юзера")
+    try:
+        await msg.answer("\n".join(lines))
+    except Exception as e:
+        log.warning(f"🛡 .gate: {e}")
 
 
 @dp.callback_query(F.data == "sub_check")
