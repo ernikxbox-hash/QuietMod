@@ -147,6 +147,34 @@ async def init_db():
     );
     CREATE INDEX IF NOT EXISTS idx_stats_type ON bot_stats(event_type);
     CREATE INDEX IF NOT EXISTS idx_stats_created ON bot_stats(created_at);
+
+    CREATE TABLE IF NOT EXISTS sled_targets (
+        user_id          INTEGER NOT NULL,
+        target_id        INTEGER NOT NULL,
+        target_username  TEXT,
+        target_name      TEXT,
+        added_at         TEXT NOT NULL,
+        last_check       TEXT,
+        last_name        TEXT,
+        last_username    TEXT,
+        last_bio         TEXT,
+        last_photo_id    TEXT,
+        last_photo_count INTEGER DEFAULT 0,
+        PRIMARY KEY (user_id, target_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_sled_targets_user ON sled_targets(user_id);
+
+    CREATE TABLE IF NOT EXISTS sled_events (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id     INTEGER NOT NULL,
+        target_id   INTEGER NOT NULL,
+        event_type  TEXT NOT NULL,
+        old_value   TEXT,
+        new_value   TEXT,
+        file_id     TEXT,
+        created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sled_events_user_target ON sled_events(user_id, target_id, created_at DESC);
     """)
     await _conn.commit()
     try:
