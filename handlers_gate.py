@@ -6,38 +6,46 @@
   🔔 Подписаться (URL) и ✅ Проверить.
 - Кнопка «Проверить» делает СВЕЖУЮ проверку через getChatMember и при
   успехе открывает главное меню.
-- Между проверками результат кэшируется (3 минуты, RAM + БД): выход из
-  канала замечаем в течение пары минут, но API не долбим на каждое
-  сообщение. Если кэш протух, а юзер вышел — доступ закрывается.
+- Проверка ВСЕГДА свежая (кэша нет): вышел из канала → следующее же
+  действие блокируется. Единственное исключение — ошибка Telegram API:
+  её результат кэшируется на 30 секунд, чтобы не долбить API во время сбоя.
 - Бизнес-автоматизация (перехват, архив, уведомления) работает, только
   если ВЛАДЕЛЕЦ подключения подписан на канал. Нет подписки — сообщения
   не сохраняются и не пересылаются (владельцу уходит напоминание).
 - Кнопки (callback) тоже под гейтом — кроме самой «Проверить». Кнопки
   в группах и бизнес-кнопки подписанного владельца не трогаем.
 - Ошибки Telegram API (бот не добавлен в канал, сеть) НЕ блокируют бота:
-  гейт временно открывается, в логах — предупреждение.
+  гейт временно открывается. Лог ошибки пишется не чаще раза в 5 минут,
+  а при старте админу приходит уведомление, если бота нет в канале.
 """
 import time
-from datetime import datetime, timedelta
 from typing import Optional
 
 from aiogram import BaseMiddleware, F
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
-import database as db
 from business_api import _get_owner_id_cached
 from core import CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
 from functions import LINE, home_msg, home_text_for, kb_main
 
-_SUB_TTL_SECONDS = 3 * 60      # кэш подписки (RAM + БД)
 _SUB_ERR_TTL_SECONDS = 30      # негативный кэш ошибки API: повторно не проверяем 30 сек
 _DM_PROMPT_SECONDS = 60        # анти-спам: экран «подпишись» не чаще раза в минуту
 _BIZ_NOTIFY_SECONDS = 10 * 60  # анти-спам: напоминание владельцу не чаще раза в 10 минут
+_WARN_LOG_INTERVAL_SECONDS = 5 * 60  # лог ошибок API не чаще раза в 5 минут
 
-_SUB_CACHE: dict[int, float] = {}       # user_id -> time.monotonic() подтверждения
 _SUB_ERR_CACHE: dict[int, float] = {}   # user_id -> время последней ОШИБКИ API (гейт открыт)
 _DM_PROMPT_LAST: dict[int, float] = {}  # user_id -> время последнего экрана гейта
 _BIZ_NOTIFY_LAST: dict[int, float] = {}  # owner_id -> время последнего напоминания
+_WARN_LOG_LAST: dict[str, float] = {}   # ключ -> время последнего предупреждения
+
+
+def _warn_throttled(key: str, text: str):
+    """Лог ошибки API не чаще раза в 5 минут — иначе каждая проверка спамит в логи."""
+    now = time.monotonic()
+    if now - _WARN_LOG_LAST.get(key, 0.0) < _WARN_LOG_INTERVAL_SECONDS:
+        return
+    _WARN_LOG_LAST[key] = now
+    log.warning(text)
 
 
 def _channel_display() -> str:
@@ -76,7 +84,7 @@ async def _api_subscribed(uid: int) -> Optional[bool]:
     try:
         member = await bot.get_chat_member(CHANNEL_USERNAME, uid)
     except Exception as e:
-        log.warning(f"🛡 getChatMember uid={uid}: {e} — гейт временно открыт")
+        _warn_throttled("sub_api", f"🛡 getChatMember uid={uid}: {e} — гейт временно открыт")
         return None
     status = member.status
     if status in ("creator", "administrator", "member"):
@@ -89,44 +97,23 @@ async def _api_subscribed(uid: int) -> Optional[bool]:
 async def check_subscription_status(uid: int, fresh: bool = False) -> Optional[bool]:
     """Три состояния: True — подписан, False — нет, None — не удалось проверить.
 
-    fresh=False — кэш (RAM + БД, 3 мин; ошибка API кэшируется 30 сек);
-    fresh=True — всегда свежий запрос API (кнопка «Проверить»).
+    Проверка ВСЕГДА свежая (без кэша): вышел из канала → следующее же
+    действие блокируется. При ошибке API результат кэшируется на 30 секунд
+    (гейт открыт), чтобы не долбить Telegram во время сбоя. Кнопка
+    «Проверить» (fresh=True) всегда идёт в API.
     """
     now = time.monotonic()
-    if not fresh:
-        if now - _SUB_CACHE.get(uid, 0.0) < _SUB_TTL_SECONDS:
-            return True
-        if now - _SUB_ERR_CACHE.get(uid, 0.0) < _SUB_ERR_TTL_SECONDS:
-            return None
-        verified = await db.get_channel_sub(uid)
-        if verified:
-            try:
-                if datetime.now() - datetime.fromisoformat(verified) < timedelta(seconds=_SUB_TTL_SECONDS):
-                    _SUB_CACHE[uid] = now
-                    return True
-            except ValueError:
-                pass
+    if not fresh and now - _SUB_ERR_CACHE.get(uid, 0.0) < _SUB_ERR_TTL_SECONDS:
+        return None
     ok = await _api_subscribed(uid)
-    if ok is True:
-        _SUB_CACHE[uid] = now
-        if len(_SUB_CACHE) > 5000:
-            _SUB_CACHE.clear()
-            _SUB_ERR_CACHE.clear()
-        try:
-            await db.set_channel_sub(uid)
-        except Exception:
-            pass
-        return True
     if ok is False:
-        _SUB_CACHE.pop(uid, None)
         _SUB_ERR_CACHE.pop(uid, None)
-        try:
-            await db.clear_channel_sub(uid)
-        except Exception:
-            pass
         return False
-    # Ошибка API: гейт временно открыт, но повторную проверку не делаем 30 секунд
+    if ok is True:
+        return True
     _SUB_ERR_CACHE[uid] = now
+    if len(_SUB_ERR_CACHE) > 5000:
+        _SUB_ERR_CACHE.clear()
     return None
 
 

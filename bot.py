@@ -1,7 +1,7 @@
 import asyncio
 import signal
 import database as db
-from core import ADMIN_ID, CHANNEL_USERNAME, RAMKA_URL, bot, close_http, dp, log
+from core import ADMIN_ID, BOT_USERNAME, CHANNEL_USERNAME, RAMKA_URL, bot, close_http, dp, log
 from tasks import _purge_loop
 import handlers
 
@@ -44,6 +44,20 @@ async def main():
                 f"🛡 Гейт подписки: бот НЕ найден в канале @{CHANNEL_USERNAME} — проверка подписки"
                 f" не будет работать! Добавь бота в канал (админом). ({e})"
             )
+            try:
+                await bot.send_message(
+                    ADMIN_ID,
+                    "⚠️ <b>Гейт подписки НЕ работает</b>\n\n"
+                    f"Бот не добавлен в канал @{CHANNEL_USERNAME} — проверить подписку\n"
+                    "невозможно, и доступ открыт <b>всем</b>.\n\n"
+                    "Как исправить (1 минута):\n"
+                    f"1️⃣ Открой канал @{CHANNEL_USERNAME} → <b>Управление каналом</b>\n"
+                    "2️⃣ <b>Администраторы</b> → <b>Добавить администратора</b>\n"
+                    f"3️⃣ Найди @{BOT_USERNAME} → добавь (права — любые)\n\n"
+                    "После этого гейт заработает сразу, без перезапуска.",
+                )
+            except Exception:
+                pass
     else:
         log.info("🛡 Гейт подписки ВЫКЛЮЧЕН — CHANNEL_USERNAME не задан")
     try:

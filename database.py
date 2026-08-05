@@ -78,10 +78,6 @@ async def init_db():
         ai_date     TEXT                   -- зарезервировано: дата сброса счётчика, когда лимит включат обратно
     );
 
-    CREATE TABLE IF NOT EXISTS channel_sub (
-        user_id     INTEGER PRIMARY KEY,
-        verified_at TEXT NOT NULL          -- когда в последний раз подтверждена подписка на канал
-    );
 
     CREATE TABLE IF NOT EXISTS messages (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -195,36 +191,6 @@ async def get_user(uid: int) -> Optional[dict]:
     async with db.execute("SELECT * FROM users WHERE id=?", (uid,)) as cur:
         row = await cur.fetchone()
         return dict(row) if row else None
-async def get_channel_sub(user_id: int) -> Optional[str]:
-    """Время последнего подтверждения подписки на канал (ISO) или None."""
-    conn = _get_conn()
-    async with conn.execute(
-        "SELECT verified_at FROM channel_sub WHERE user_id=?", (user_id,)
-    ) as cur:
-        row = await cur.fetchone()
-        return row[0] if row else None
-
-
-async def set_channel_sub(user_id: int):
-    """Записать подтверждение подписки (UPSERT)."""
-    conn = _get_conn()
-    async with _write_lock:
-        await conn.execute(
-            "INSERT INTO channel_sub (user_id, verified_at) VALUES (?, ?) "
-            "ON CONFLICT(user_id) DO UPDATE SET verified_at=excluded.verified_at",
-            (user_id, datetime.now().isoformat()),
-        )
-        await conn.commit()
-
-
-async def clear_channel_sub(user_id: int):
-    """Стереть подтверждение подписки (юзер вышел из канала)."""
-    conn = _get_conn()
-    async with _write_lock:
-        await conn.execute("DELETE FROM channel_sub WHERE user_id=?", (user_id,))
-        await conn.commit()
-
-
 async def upsert_user(uid: int, username: str, full_name: str, referrer_id: Optional[int] = None):
     now = datetime.now().isoformat()
     db = _get_conn()
