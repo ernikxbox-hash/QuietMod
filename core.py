@@ -36,6 +36,9 @@ def _get_env(name: str, default: str = "") -> str:
 # raw-файл на GitHub. Пусто → рамка рисуется кодом (барочный стиль).
 # Имя переменной в Railway: RAMKA_URL (регистр больше не важен, см. _get_env).
 RAMKA_URL = _get_env("RAMKA_URL")
+# Ключ Google AI Studio — используется ТОЛЬКО для генерации картинок (.draw),
+# больше нигде в боте не применяется (текстовый ИИ живёт на Groq).
+GEMINI_API_KEY = _get_env("GEMINI_API_KEY")
 # Единая модель для всего бота: флагман Groq (120B, Production) — дешевле и быстрее
 # llama-3.3-70b (задепрекейчена 16.08.26). Groq сам рекомендует её как замену.
 # Распознавание фото ОТКЛЮЧЕНО: llama-4-maverick (09.03.26), llama-4-scout (17.07.26)
