@@ -279,6 +279,25 @@ def home_text() -> str:
         f"◇ ИИ           <b>без лимитов</b>\n"
         f"<code>{LINE}</code>"
     )
+def home_text_for(uid: int, name: str) -> str:
+    """Полное приветствие для конкретного пользователя (после прохода гейта подписки)."""
+    return (
+        f"◆ <b>QUIET MOD</b> 👁️\n"
+        f"<code>{LINE}</code>\n\n"
+        f"<b>{html_escape(name)}</b>, добро пожаловать в тишину.\n\n"
+        "Я слежу за тем, что исчезает —\n"
+        "<b>удалённые и изменённые</b> сообщения\n"
+        "появятся здесь раньше, чем их забудут.\n\n"
+        f"<code>{LINE}</code>\n"
+        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
+        f"◇ Перехват     <b>безлимит</b>\n"
+        f"◇ Архив        <b>безлимит</b>\n"
+        f"◇ Поиск        <b>включён</b>\n"
+        f"◇ ИИ           <b>без лимитов</b>\n"
+        f"<code>{LINE}</code>\n\n"
+        f"◇ Пригласить:\n"
+        f"<code>{ref_link(uid)}</code>"
+    )
 async def _show_home(uid: int, text: str, reply_markup, target_msg: "Message | None" = None):
     existing_id = home_msg.get(uid)
     if existing_id and target_msg:

@@ -5,12 +5,12 @@ from typing import Optional
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BusinessConnection, Message
-from html import escape as html_escape
 
 import database as db
 from business_api import _BC_OWNER_CACHE, _BC_OWNER_TTL_SECONDS
 from core import ADMIN_ID, bot, dp, log
-from functions import LINE, _show_home, kb_admin, kb_main, ref_link
+from functions import LINE, _show_home, home_text_for, kb_admin, kb_main
+from handlers_gate import SUB_GATE_TEXT, check_subscription, sub_kb
 
 
 @dp.business_connection()
@@ -51,24 +51,10 @@ async def cmd_start(msg: Message, state: FSMContext):
             )
         except Exception:
             pass
-    home_text_full = (
-        f"◆ <b>QUIET MOD</b> 👁️\n"
-        f"<code>{LINE}</code>\n\n"
-        f"<b>{html_escape(name)}</b>, добро пожаловать в тишину.\n\n"
-        "Я слежу за тем, что исчезает —\n"
-        "<b>удалённые и изменённые</b> сообщения\n"
-        "появятся здесь раньше, чем их забудут.\n\n"
-        f"<code>{LINE}</code>\n"
-        f"◇ Статус       <b>Свободен · без лимитов</b>\n"
-        f"◇ Перехват     <b>безлимит</b>\n"
-        f"◇ Архив        <b>безлимит</b>\n"
-        f"◇ Поиск        <b>включён</b>\n"
-        f"◇ ИИ           <b>без лимитов</b>\n"
-        f"<code>{LINE}</code>\n\n"
-        f"◇ Пригласить:\n"
-        f"<code>{ref_link(uid)}</code>"
-    )
-    await _show_home(uid, home_text_full, kb_main(uid), msg)
+    if not await check_subscription(uid):
+        await msg.answer(SUB_GATE_TEXT, reply_markup=sub_kb())
+        return
+    await _show_home(uid, home_text_for(uid, name), kb_main(uid), msg)
 
 
 @dp.message(Command("admin"))

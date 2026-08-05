@@ -1,7 +1,7 @@
 import asyncio
 import signal
 import database as db
-from core import ADMIN_ID, RAMKA_URL, bot, close_http, dp, log
+from core import ADMIN_ID, CHANNEL_USERNAME, RAMKA_URL, bot, close_http, dp, log
 from tasks import _purge_loop
 import handlers
 
@@ -35,6 +35,17 @@ async def main():
         log.info(f"🖼 RAMKA_URL задана ({len(RAMKA_URL)} симв.) — рамка из PNG")
     else:
         log.info("🖼 RAMKA_URL не задана — .ramka рисует рамку кодом (барочный стиль)")
+    if CHANNEL_USERNAME.strip():
+        try:
+            me = await bot.get_chat_member(CHANNEL_USERNAME, bot.id)
+            log.info(f"🛡 Гейт подписки: @{CHANNEL_USERNAME} — бот в канале ({me.status})")
+        except Exception as e:
+            log.warning(
+                f"🛡 Гейт подписки: бот НЕ найден в канале @{CHANNEL_USERNAME} — проверка подписки"
+                f" не будет работать! Добавь бота в канал (админом). ({e})"
+            )
+    else:
+        log.info("🛡 Гейт подписки ВЫКЛЮЧЕН — CHANNEL_USERNAME не задан")
     try:
         await bot.send_message(
             ADMIN_ID,
