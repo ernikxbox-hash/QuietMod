@@ -27,7 +27,7 @@ from aiogram.types import (
     Message,
     PhotoSize,
 )
-from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageOps
 
 import database as db
 from business_api import (
@@ -214,20 +214,37 @@ def _ramka_draw(pw: int, ph: int) -> Image.Image:
         _ramka_bead(bd, bx, by, big)
     img.alpha_composite(beads)
 
-    # 5. Мягкая тень внутри отверстия — фото выглядит вставленным в рамку
-    sh_w = max(2, int(b * 0.13))
-    ring = Image.new("L", (W, H), 0)
-    rd = ImageDraw.Draw(ring)
-    rd.rectangle([ox0, oy0, ox1, oy1], fill=255)
-    rd.rectangle([ox0 + sh_w, oy0 + sh_w, ox1 - sh_w, oy1 - sh_w], fill=0)
-    ring = ring.filter(ImageFilter.GaussianBlur(max(1, int(sh_w * 0.55))))
-    img.alpha_composite(Image.composite(
-        Image.new("RGBA", (W, H), (0, 0, 0, 175)),
-        Image.new("RGBA", (W, H), (0, 0, 0, 0)),
-        ring,
-    ))
+    # 5. Прозрачное отверстие в центре — сквозь него видно фото целиком.
+    #    Отступ hpad сохраняет жемчуг и тёмную кромку по периметру отверстия.
+    #    (Страховка от инверсии координат на абсурдно маленьких фото: если
+    #    отверстие не влезает — оставляем рамку без выреза, падать не будем.)
+    hpad = max(int(rb * 1.7), int(b * 0.13)) + SS * 2
+    hx0, hy0, hx1, hy1 = ox0 + hpad, oy0 + hpad, ox1 - hpad, oy1 - hpad
+    hole_r = max(2, int(b * 0.10))
+    if hx1 > hx0 and hy1 > hy0:
+        hole = Image.new("L", (W, H), 255)
+        ImageDraw.Draw(hole).rounded_rectangle(
+            [hx0, hy0, hx1, hy1], radius=hole_r, fill=0
+        )
+        img.putalpha(ImageChops.multiply(img.getchannel("A"), hole))
 
-    # 6. Чёткие кромки: тёмная по отверстию + контур тела
+        # 6. Мягкая тень на фото сразу под рамкой — эффект «вставленного» фото
+        sh_w = max(2, int(b * 0.13))
+        ring = Image.new("L", (W, H), 0)
+        rd = ImageDraw.Draw(ring)
+        rd.rounded_rectangle([hx0, hy0, hx1, hy1], radius=hole_r, fill=255)
+        rd.rounded_rectangle(
+            [hx0 + sh_w, hy0 + sh_w, hx1 - sh_w, hy1 - sh_w],
+            radius=max(2, hole_r - sh_w), fill=0,
+        )
+        ring = ring.filter(ImageFilter.GaussianBlur(max(1, int(sh_w * 0.55))))
+        img.alpha_composite(Image.composite(
+            Image.new("RGBA", (W, H), (0, 0, 0, 175)),
+            Image.new("RGBA", (W, H), (0, 0, 0, 0)),
+            ring,
+        ))
+
+    # 7. Чёткие кромки: тёмная по отверстию + контур тела
     trim = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     td = ImageDraw.Draw(trim)
     td.rectangle([ox0, oy0, ox1, oy1], outline=(84, 56, 10, 255), width=max(2, SS * 2))
