@@ -6,10 +6,10 @@
 2. Бизнес-чат: ответь на фото и напиши .ramka — бот вернёт фото в рамке.
 3. Группа/канал: ответь на фото и напиши .ramka — фото в рамке в чат.
 
-Рамка рисуется кодом (Pillow) под размер фото: градиентное золотое тело,
-углублённый кант, розетки по углам, картуши по центру, жемчужная полоса
-по периметру отверстия и мягкая внутренняя тень. Центр рамки прозрачный —
-фото видно целиком, без обрезки.
+Рамка рисуется кодом (Pillow) под размер фото в стиле old money: античное
+золото, витой жгут по периметру, веерные медальоны по углам, картуши по
+центру, двойной филлет, жемчужная полоса по периметру отверстия и мягкая
+внутренняя тень. Центр рамки прозрачный — фото видно целиком, без обрезки.
 """
 import asyncio
 from io import BytesIO
@@ -69,65 +69,104 @@ def _ramka_bead(d, cx: int, cy: int, r: int) -> None:
     d.ellipse([hx, hy, hx + hr * 2, hy + hr * 2], fill=(255, 252, 232, 230))
 
 
-def _ramka_rosette(d, cx: int, cy: int, R: int, ss: int) -> None:
-    """Розетка-орнамент: кольцо лепестков, средний круг, клинья, центр."""
-    if R < 4:
+def _ramka_rope_h(d, x0: int, x1: int, y: int, r: int) -> None:
+    """Витой золотой жгут (горизонтальная полоса) — классический молдинг."""
+    if r < 2:
         return
-    d.ellipse([cx - R, cy - R, cx + R, cy + R],
-              fill=(148, 102, 32, 255), outline=(104, 70, 16, 255), width=ss)
-    for k in range(10):
-        a0 = k * 36
-        d.arc([cx - R, cy - R, cx + R, cy + R], a0, a0 + 16,
-              fill=(216, 178, 86, 255), width=max(1, int(R * 0.28)))
-    Rm = int(R * 0.60)
-    d.ellipse([cx - Rm, cy - Rm, cx + Rm, cy + Rm],
-              fill=(240, 210, 120, 255), outline=(168, 120, 36, 255), width=ss)
-    Rv = int(R * 0.40)
-    for k in range(6):
-        a0 = k * 60 + 24
-        d.pieslice([cx - Rv, cy - Rv, cx + Rv, cy + Rv], a0, a0 + 42,
-                   fill=(198, 152, 58, 255))
-    Rc = max(1, int(R * 0.15))
-    d.ellipse([cx - Rc, cy - Rc, cx + Rc, cy + Rc], fill=(255, 244, 200, 255))
-    Rb = max(1, int(R * 0.08))
-    d.ellipse([cx - Rc + int(R * 0.10), cy - Rc - int(R * 0.22),
-               cx - Rc + int(R * 0.10) + Rb * 2, cy - Rc - int(R * 0.22) + Rb * 2],
-              fill=(255, 255, 236, 210))
+    s = max(2, int(r * 0.9))
+    dy = max(1, int(r * 0.5))
+    w = max(1, int(r * 0.35))
+    x = x0
+    while x < x1:
+        d.line([x, y - dy, x + s, y + dy], fill=(238, 206, 122, 255), width=w)
+        d.line([x, y + dy, x + s, y - dy], fill=(108, 72, 16, 255), width=w)
+        x += s
 
 
-def _ramka_crest(d, cx: int, cy: int, R: int, ss: int) -> None:
-    """Картуш (ромб + эллипс + бусины) в центре верхней/нижней стороны."""
-    if R < 4:
+def _ramka_rope_v(d, y0: int, y1: int, x: int, r: int) -> None:
+    """Витой золотой жгут (вертикальная полоса)."""
+    if r < 2:
         return
-    d.ellipse([cx - R, cy - int(R * 0.62), cx + R, cy + int(R * 0.62)],
-              fill=(226, 192, 100, 255), outline=(138, 94, 24, 255), width=ss)
-    d.ellipse([cx - int(R * 0.52), cy - int(R * 0.34),
-               cx + int(R * 0.52), cy + int(R * 0.34)],
+    s = max(2, int(r * 0.9))
+    dx = max(1, int(r * 0.5))
+    w = max(1, int(r * 0.35))
+    y = y0
+    while y < y1:
+        d.line([x - dx, y, x + dx, y + s], fill=(238, 206, 122, 255), width=w)
+        d.line([x + dx, y, x - dx, y + s], fill=(108, 72, 16, 255), width=w)
+        y += s
+
+
+def _ramka_corner_orn(d, cx: int, cy: int, R: int, ss: int, sx: int = 1, sy: int = 1) -> None:
+    """Угол old money: веер листьев на тёмной четверти + медальон."""
+    if R < 6:
+        return
+    if sx == 1 and sy == 1:
+        a0 = 0
+    elif sx == -1 and sy == 1:
+        a0 = 90
+    elif sx == -1 and sy == -1:
+        a0 = 180
+    else:
+        a0 = 270
+    d.pieslice([cx - R, cy - R, cx + R, cy + R], a0, a0 + 90,
+               fill=(104, 70, 18, 255), outline=(72, 46, 10, 255))
+    for k in range(4):
+        la = a0 + 12 + k * 21
+        d.arc([cx - R, cy - R, cx + R, cy + R], la, la + 14,
+              fill=(226, 190, 100, 255), width=max(2, int(R * 0.09)))
+    mx = cx + sx * int(R * 0.36)
+    my = cy + sy * int(R * 0.36)
+    mr = int(R * 0.20)
+    d.polygon([(mx, my - mr), (mx + mr, my), (mx, my + mr), (mx - mr, my)],
+              fill=(240, 210, 120, 255), outline=(150, 104, 34, 255))
+    _ramka_bead(d, mx, my, max(2, int(R * 0.08)))
+
+
+def _ramka_cartouche(d, cx: int, cy: int, R: int, ss: int) -> None:
+    """Картуш old money: щит, корона, ромбы, жемчужины, завитки."""
+    if R < 6:
+        return
+    d.ellipse([cx - R, cy - int(R * 0.6) + int(R * 0.12),
+               cx + R, cy + int(R * 0.6) + int(R * 0.12)],
+              fill=(72, 48, 12, 150))
+    d.ellipse([cx - R, cy - int(R * 0.6), cx + R, cy + int(R * 0.6)],
+              fill=(226, 192, 100, 255), outline=(120, 82, 22, 255), width=ss)
+    d.ellipse([cx - int(R * 0.55), cy - int(R * 0.33),
+               cx + int(R * 0.55), cy + int(R * 0.33)],
               fill=(250, 226, 152, 255))
     for sgn in (-1, 1):
         d.polygon(
-            [(cx, cy + int(R * 0.90) * sgn),
-             (cx - int(R * 0.34), cy + int(R * 0.52) * sgn),
-             (cx + int(R * 0.34), cy + int(R * 0.52) * sgn)],
+            [(cx, cy + int(R * 0.62) * sgn),
+             (cx - int(R * 0.16), cy + int(R * 0.82) * sgn),
+             (cx + int(R * 0.16), cy + int(R * 0.82) * sgn)],
             fill=(196, 150, 58, 255),
         )
-        # бусина на вершине ромба; y-координаты обязательно упорядочиваем —
-        # при sgn=-1 они идут сверху вниз и Pillow >= 10.4 падает
-        # с ValueError: y1 must be greater than or equal to y0
-        b_y0 = cy + int(R * 0.82) * sgn
-        b_y1 = cy + int(R * 1.02) * sgn
-        if b_y0 > b_y1:
-            b_y0, b_y1 = b_y1, b_y0
-        d.ellipse([cx - int(R * 0.12), b_y0,
-                   cx + int(R * 0.12), b_y1],
-                  fill=(255, 240, 190, 255))
+        _ramka_bead(d, cx, cy + int(R * 0.98) * sgn, max(2, int(R * 0.10)))
+    _ramka_bead(d, cx - int(R * 0.62), cy, max(2, int(R * 0.10)))
+    _ramka_bead(d, cx + int(R * 0.62), cy, max(2, int(R * 0.10)))
+    d.arc([cx - int(R * 0.9), cy - int(R * 0.5), cx - int(R * 0.3), cy + int(R * 0.5)],
+          90, 270, fill=(150, 104, 34, 255), width=ss)
+    d.arc([cx + int(R * 0.3), cy - int(R * 0.5), cx + int(R * 0.9), cy + int(R * 0.5)],
+          270, 450, fill=(150, 104, 34, 255), width=ss)
+
+
+def _ramka_medallion(d, cx: int, cy: int, R: int, ss: int) -> None:
+    """Медальон по центру боковины."""
+    if R < 4:
+        return
+    d.ellipse([cx - R, cy - int(R * 0.8), cx + R, cy + int(R * 0.8)],
+              fill=(214, 176, 84, 255), outline=(120, 82, 22, 255), width=ss)
+    d.ellipse([cx - int(R * 0.6), cy - int(R * 0.45), cx + int(R * 0.6), cy + int(R * 0.45)],
+              fill=(246, 222, 148, 255))
+    _ramka_bead(d, cx, cy, max(2, int(R * 0.25)))
 
 
 def _ramka_draw(pw: int, ph: int) -> Image.Image:
     """Орнаментальная золотая рамка под размер фото (pw×ph), центр прозрачный."""
     SS = 2  # supersampling: рисуем в 2 раза крупнее и сглаживаем
     W, H = pw * SS, ph * SS
-    b = max(26, int(min(pw, ph) * 0.115)) * SS
+    b = max(26, int(min(pw, ph) * 0.125)) * SS
     b = min(b, min(W, H) // 2 - 8 * SS)
     if b <= 0:
         b = max(2, min(W, H) // 3)
@@ -137,11 +176,12 @@ def _ramka_draw(pw: int, ph: int) -> Image.Image:
 
     # 1. Тело рамки — золотой градиент с мягким скруглением
     body_grad = _ramka_gradient(W, H, [
-        (0.00, (243, 219, 136)),
-        (0.16, (228, 192, 100)),
-        (0.52, (199, 154, 60)),
-        (0.78, (178, 130, 46)),
-        (1.00, (150, 104, 34)),
+        (0.00, (252, 236, 176)),
+        (0.15, (238, 206, 122)),
+        (0.42, (206, 162, 72)),
+        (0.68, (180, 132, 46)),
+        (0.86, (150, 102, 34)),
+        (1.00, (112, 72, 20)),
     ])
     body_mask = Image.new("L", (W, H), 0)
     ImageDraw.Draw(body_mask).rounded_rectangle([0, 0, W - 1, H - 1], radius=r_out, fill=255)
@@ -168,28 +208,51 @@ def _ramka_draw(pw: int, ph: int) -> Image.Image:
     d = ImageDraw.Draw(orn)
 
     # свет сверху: светлая фаска у верхней кромки тела, тень у нижней
-    d.rounded_rectangle([SS, SS, W - 1 - SS, int(b * 0.34)], radius=r_out,
+    d.rounded_rectangle([SS, SS, W - 1 - SS, int(b * 0.30)], radius=r_out,
                         fill=(255, 246, 208, 70))
-    d.rounded_rectangle([SS, H - 1 - int(b * 0.26), W - 1 - SS, H - 1 - SS], radius=r_out,
+    d.rounded_rectangle([SS, H - 1 - int(b * 0.22), W - 1 - SS, H - 1 - SS], radius=r_out,
                         fill=(58, 36, 6, 90))
+
+    # двойной филлет у отверстия — две тонкие линии (признак дорогой рамки)
+    fl = int(b * 0.60)
+    d.rounded_rectangle([fl, fl, W - 1 - fl, H - 1 - fl], radius=max(2, r_out - fl),
+                        outline=(255, 244, 200, 220), width=SS)
+    d.rounded_rectangle([fl + SS * 2, fl + SS * 2, W - 1 - fl - SS * 2, H - 1 - fl - SS * 2],
+                        radius=max(2, r_out - fl - SS * 2),
+                        outline=(88, 58, 14, 200), width=SS)
+
+    # витой жгут по периметру рамки
+    rope_y = int(b * 0.45)
+    rope_x = int(b * 0.45)
+    rp = max(2, int(b * 0.07))
+    _ramka_rope_h(d, 0, W - 1, rope_y, rp)
+    _ramka_rope_h(d, 0, W - 1, H - rope_y, rp)
+    _ramka_rope_v(d, 0, H - 1, rope_x, rp)
+    _ramka_rope_v(d, 0, H - 1, W - rope_x, rp)
 
     # освещение канала: тень на верхней стенке, блик на нижней
     cb = [i1, i1, W - 1 - i1, H - 1 - i1]
     d.arc(cb, 0, 180, fill=(88, 60, 14, 200), width=max(2, SS * 2))
     d.arc(cb, 180, 360, fill=(255, 238, 190, 220), width=max(2, SS * 2))
 
-    # розетки по углам
+    # углы — веерные медальоны
     cc = int(b * 0.55)
-    for cx, cy in ((cc, cc), (W - cc, cc), (cc, H - cc), (W - cc, H - cc)):
-        _ramka_rosette(d, cx, cy, int(b * 0.40), SS)
+    cr = int(b * 0.40)
+    _ramka_corner_orn(d, cc, cc, cr, SS, 1, 1)
+    _ramka_corner_orn(d, W - cc, cc, cr, SS, -1, 1)
+    _ramka_corner_orn(d, cc, H - cc, cr, SS, 1, -1)
+    _ramka_corner_orn(d, W - cc, H - cc, cr, SS, -1, -1)
 
     # картуши сверху и снизу по центру
-    _ramka_crest(d, W // 2, int(b * 0.58), int(b * 0.30), SS)
-    _ramka_crest(d, W // 2, H - int(b * 0.58), int(b * 0.30), SS)
+    _ramka_cartouche(d, W // 2, int(b * 0.58), int(b * 0.30), SS)
+    _ramka_cartouche(d, W // 2, H - int(b * 0.58), int(b * 0.30), SS)
 
-    # розетки по центру боковин
-    _ramka_rosette(d, cc, H // 2, int(b * 0.28), SS)
-    _ramka_rosette(d, W - cc, H // 2, int(b * 0.28), SS)
+    # медальоны по центру боковин
+    _ramka_medallion(d, cc, H // 2, int(b * 0.24), SS)
+    _ramka_medallion(d, W - cc, H // 2, int(b * 0.24), SS)
+
+    # обрезаем орнаменты по форме тела рамки
+    orn.putalpha(ImageChops.multiply(orn.getchannel("A"), body_mask))
 
     img.alpha_composite(orn)
 
