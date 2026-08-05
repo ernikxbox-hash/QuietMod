@@ -1,7 +1,7 @@
 import asyncio
 import signal
 import database as db
-from core import ADMIN_ID, bot, close_http, dp, log
+from core import ADMIN_ID, RAMKA_URL, bot, close_http, dp, log
 from tasks import _purge_loop
 import handlers
 
@@ -31,6 +31,10 @@ async def main():
     log.info("📊 Статистика: запуск зафиксирован")
     await _sync_bot_chats()
     log.info("🚀 Quiet Mod 👁️ запускается...")
+    if RAMKA_URL.strip():
+        log.info(f"🖼 RAMKA_URL задана ({len(RAMKA_URL)} симв.) — рамка из PNG")
+    else:
+        log.info("🖼 RAMKA_URL не задана — .ramka рисует рамку кодом (барочный стиль)")
     try:
         await bot.send_message(
             ADMIN_ID,

@@ -6,13 +6,15 @@
 2. Бизнес-чат: ответь на фото и напиши .ramka — бот вернёт фото в рамке.
 3. Группа/канал: ответь на фото и напиши .ramka — фото в рамке в чат.
 
-Рамка рисуется кодом (Pillow) под размер фото в барочном стиле: античное
-золото, резные флейты по молдингам, витые волюты по углам, раковины-вееры
-по центру верха/низа, свитки по боковинам, двойной филлет, жемчужная
-кайма с бликом и мягкая внутренняя тень. Центр рамки прозрачный — фото
-видно целиком, без обрезки.
+Рамка по умолчанию рисуется кодом (Pillow) под размер фото в барочном стиле:
+античное золото, резные флейты, волюты по углам, вееры, свитки, жемчужная кайма.
+Но если в env задан RAMKA_URL — ссылка на PNG-рамку с прозрачным отверстием
+(например, raw-файл на GitHub), бот качает её (кэш 10 минут) и накладывает на
+фото: картинка заливает отверстие целиком (cover-fit, края могут подрезаться).
+Ссылки нет или скачать не удалось → фолбэк на рисованную рамку.
 """
 import asyncio
+import time
 from io import BytesIO
 from typing import Optional
 
@@ -36,7 +38,7 @@ from business_api import (
     _business_edit_message,
     _get_owner_id_cached,
 )
-from core import BOT_TOKEN, BOT_USERNAME, S, bot, dp, get_http, log
+from core import BOT_TOKEN, BOT_USERNAME, RAMKA_URL, S, bot, dp, get_http, log
 from functions import LINE
 
 
@@ -331,16 +333,163 @@ def _ramka_draw(pw: int, ph: int) -> Image.Image:
     return img.resize((pw, ph), Image.LANCZOS)
 
 
-def _ramka_render(data: bytes) -> bytes:
-    """Синхронно (в потоке): фото → фото в золотой рамке, JPEG-байты."""
+# ── Рамка из PNG по ссылке (RAMKA_URL) с фолбэком на рисованную ──────
+# Рамка качается один раз и кэшируется на 10 минут: GitHub не дёргается
+# на каждое фото. Ссылки нет или скачать не вышло — рисуем кодом.
+_RAMKA_PNG: Optional[tuple] = None   # (RGBA-рамка, отверстие-или-None)
+_RAMKA_PNG_TS: float = 0.0
+_RAMKA_PNG_TTL = 600.0
+_RAMKA_PNG_FAIL_TS: float = 0.0      # время последней неудачной загрузки
+_RAMKA_URL_EMPTY_LOGGED = False      # лог «RAMKA_URL пуста» пишем один раз, не на каждое фото
+
+
+def _ramka_find_hole(alpha: Image.Image):
+    """Прямоугольник прозрачного отверстия в центре рамки (или None).
+
+    Расширяем прямоугольник от центра, пока по его краям всё прозрачно —
+    останавливаемся у первого непрозрачного (золотого) пикселя.
+    """
+    w, h = alpha.size
+    a = alpha.load()
+    cx, cy = w // 2, h // 2
+    if a[cx, cy] > 8:
+        return None  # центр не прозрачный — отверстия нет
+    x0, y0, x1, y1 = cx, cy, cx, cy
+    while True:
+        grew = False
+        if x0 > 0 and all(a[x0 - 1, y] <= 8 for y in range(y0, y1 + 1)):
+            x0 -= 1
+            grew = True
+        if x1 < w - 1 and all(a[x1 + 1, y] <= 8 for y in range(y0, y1 + 1)):
+            x1 += 1
+            grew = True
+        if y0 > 0 and all(a[x, y0 - 1] <= 8 for x in range(x0, x1 + 1)):
+            y0 -= 1
+            grew = True
+        if y1 < h - 1 and all(a[x, y1 + 1] <= 8 for x in range(x0, x1 + 1)):
+            y1 += 1
+            grew = True
+        if not grew:
+            break
+    return (x0, y0, x1, y1)
+
+
+def _ramka_prepare_png(data: bytes):
+    """Загружает PNG-рамку из байтов: RGBA, приведение размера, поиск отверстия."""
+    try:
+        im = Image.open(BytesIO(data))
+        im.load()
+        im = ImageOps.exif_transpose(im)
+        if im.mode != "RGBA":
+            im = im.convert("RGBA")
+        w, h = im.size
+        if max(w, h) > 1920:
+            im.thumbnail((1920, 1920), Image.LANCZOS)
+        elif max(w, h) < 1080:
+            # мелкие рамки увеличиваем, чтобы результат не был пиксельным
+            s = 1080 / max(w, h)
+            im = im.resize((max(1, int(w * s)), max(1, int(h * s))), Image.LANCZOS)
+        return (im, _ramka_find_hole(im.getchannel("A")))
+    except Exception as e:
+        log.warning(f"ramka png prepare: {e}")
+        return None
+
+
+async def _ramka_load_png():
+    """Скачивает рамку из RAMKA_URL (кэш 10 минут). None — рамки нет / ошибка.
+
+    Неудачные попытки тоже запоминаются на 5 минут — битая ссылка не будет
+    тормозить каждый вызов .ramka сетевым запросом.
+    """
+    url = RAMKA_URL.strip()
+    if not url:
+        global _RAMKA_URL_EMPTY_LOGGED
+        if not _RAMKA_URL_EMPTY_LOGGED:
+            _RAMKA_URL_EMPTY_LOGGED = True
+            log.info("ramka: RAMKA_URL пуста — рисую рамку кодом (барочный стиль)")
+        return None
+    now = time.monotonic()
+    if _RAMKA_PNG is not None and now - _RAMKA_PNG_TS < _RAMKA_PNG_TTL:
+        return _RAMKA_PNG
+    if _RAMKA_PNG_FAIL_TS and now - _RAMKA_PNG_FAIL_TS < 300:
+        return None
+    try:
+        session = get_http()
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"download frame: status {resp.status}")
+            data = await resp.read()
+        pack = await asyncio.to_thread(_ramka_prepare_png, data)
+        if pack is None:
+            _RAMKA_PNG_FAIL_TS = now
+            return None
+        _RAMKA_PNG = pack
+        _RAMKA_PNG_TS = now
+        _RAMKA_PNG_FAIL_TS = 0.0
+        frame, hole = pack
+        log.info(
+            f"ramka: PNG-рамка загружена ({frame.size[0]}x{frame.size[1]}, "
+            f"отверстие: {'найдено' if hole else 'НЕТ — будет нарисована рамка кодом'})"
+        )
+        return pack
+    except Exception as e:
+        log.warning(f"ramka png load: {e}")
+        _RAMKA_PNG_FAIL_TS = now
+        return None
+
+
+def _ramka_png_render(photo_rgb: Image.Image, frame: Image.Image, hole):
+    """Фото заливает отверстие PNG-рамки целиком (cover-fit), рамка сверху.
+
+    None — рамку применить нельзя (нет прозрачного отверстия) → рисуем кодом.
+    """
+    alpha = frame.getchannel("A")
+    ob = alpha.getbbox()  # у рамки могут быть прозрачные края — обрезаем по ним
+    if ob is None:
+        return None
+    ox0, oy0, ox1, oy1 = ob
+    fw, fh = ox1 - ox0 + 1, oy1 - oy0 + 1
+    if hole is None or fw < 4 or fh < 4:
+        return None
+    hx0, hy0, hx1, hy1 = hole
+    hw, hh = hx1 - hx0 + 1, hy1 - hy0 + 1
+    if hw < 1 or hh < 1:
+        return None
+    # cover-fit: масштабируем фото до размера отверстия и центрируем (края подрежутся)
+    scale = max(hw / photo_rgb.width, hh / photo_rgb.height)
+    p_w = max(hw, int(photo_rgb.width * scale))
+    p_h = max(hh, int(photo_rgb.height * scale))
+    photo = photo_rgb.resize((p_w, p_h), Image.LANCZOS)
+    left = (p_w - hw) // 2
+    top = (p_h - hh) // 2
+    photo = photo.crop((left, top, left + hw, top + hh)).convert("RGBA")
+    canvas = Image.new("RGBA", (fw, fh), (0, 0, 0, 0))
+    canvas.paste(photo, (hx0 - ox0, hy0 - oy0))
+    canvas.alpha_composite(frame.crop(ob))
+    return canvas
+
+
+def _ramka_render(data: bytes, frame_pack: Optional[tuple]) -> bytes:
+    """Синхронно (в потоке): фото → фото в рамке, JPEG-байты.
+
+    frame_pack = (RGBA-рамка, отверстие) из RAMKA_URL, либо None → рисованная рамка.
+    """
     im = Image.open(BytesIO(data))
     im = ImageOps.exif_transpose(im).convert("RGB")
     if im.width * im.height > 4_000_000:
         im.thumbnail((1920, 1920), Image.LANCZOS)
-    w, h = im.size
-    frame = _ramka_draw(w, h)
-    out = im.convert("RGBA")
-    out.alpha_composite(frame)
+    if frame_pack is not None:
+        out = _ramka_png_render(im, frame_pack[0], frame_pack[1])
+        if out is None:
+            log.warning("ramka: PNG-рамка без отверстия — рисую рамку кодом")
+            frame = _ramka_draw(im.width, im.height)
+            out = im.convert("RGBA")
+            out.alpha_composite(frame)
+    else:
+        w, h = im.size
+        frame = _ramka_draw(w, h)
+        out = im.convert("RGBA")
+        out.alpha_composite(frame)
     buf = BytesIO()
     out.convert("RGB").save(buf, "JPEG", quality=92)
     return buf.getvalue()
@@ -355,7 +504,8 @@ async def _ramka_process_photo(photo: PhotoSize) -> bytes:
         if resp.status != 200:
             raise RuntimeError(f"download photo: status {resp.status}")
         data = await resp.read()
-    return await asyncio.to_thread(_ramka_render, data)
+    frame_pack = await _ramka_load_png()
+    return await asyncio.to_thread(_ramka_render, data, frame_pack)
 
 
 async def _ramka_run(photo: PhotoSize, chat_id: int,

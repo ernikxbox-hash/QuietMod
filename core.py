@@ -15,6 +15,27 @@ GROQ_API_KEY2 = os.environ.get("GROQ_API_KEY2", "")
 GROQ_API_KEY3 = os.environ.get("GROQ_API_KEY3", "")  # аварийный ключ (на случай исчерпания лимитов 1 и 2)
 GROQ_API_KEYS = [k for k in (GROQ_API_KEY, GROQ_API_KEY2, GROQ_API_KEY3) if k and k.strip()]
 BOT_USERNAME = "Quiet_Mod_Bot"
+
+def _get_env(name: str, default: str = "") -> str:
+    """Чтение env-переменной без чувствительности к регистру имени.
+
+    Railway отдаёт переменные как есть: RAMKA_URL и Ramka_URL — это РАЗНЫЕ
+    переменные (Linux, регистр важен). Чтобы пользователь не мог ошибиться
+    регистром, ищем точное имя, а при отсутствии — совпадение без учёта
+    регистра (ramka_url, Ramka_URL, RAMKA_Url и т.п.).
+    """
+    val = os.environ.get(name)
+    if val is not None:
+        return val
+    for k, v in os.environ.items():
+        if k.lower() == name.lower():
+            return v
+    return default
+
+# Ссылка на PNG-рамку для .ramka (прозрачное отверстие по центру) — например,
+# raw-файл на GitHub. Пусто → рамка рисуется кодом (барочный стиль).
+# Имя переменной в Railway: RAMKA_URL (регистр больше не важен, см. _get_env).
+RAMKA_URL = _get_env("RAMKA_URL")
 # Единая модель для всего бота: флагман Groq (120B, Production) — дешевле и быстрее
 # llama-3.3-70b (задепрекейчена 16.08.26). Groq сам рекомендует её как замену.
 # Распознавание фото ОТКЛЮЧЕНО: llama-4-maverick (09.03.26), llama-4-scout (17.07.26)
