@@ -35,6 +35,7 @@ class S(StatesGroup):
     suggest_idea = State()
     broadcast = State()
     broadcast_groups = State()
+    ramka = State()
 
 _http_session: Optional[aiohttp.ClientSession] = None
 

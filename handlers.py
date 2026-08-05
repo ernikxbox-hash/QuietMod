@@ -8,6 +8,7 @@
 import handlers_start      # /start, /admin, business_connection (кэш владельца)
 import handlers_commands   # .spam .mute .nomute .afk .code .wbl .ai .price .curs + форматирование
 import handlers_games      # .knb (Камень·Ножницы·Бумага)
+import handlers_ramka      # .ramka (золотая рамка на фото)
 import handlers_intercept  # перехват удалённых/изменённых + голосовые (catch-all)
 import handlers_ai         # ИИ-консьерж в ЛС и поиск по архиву
 import handlers_menu       # ЛС-меню: сохранённые, howto, профиль, архив, донаты
