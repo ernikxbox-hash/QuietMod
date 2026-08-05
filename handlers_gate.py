@@ -27,7 +27,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from business_api import _get_owner_id_cached
-from core import ADMIN_ID, CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
+from core import ADMIN_ID, BOT_USERNAME, CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
 from functions import LINE, home_msg, home_text_for, kb_main
 
 _SUB_ERR_TTL_SECONDS = 30      # негативный кэш ошибки API: повторно не проверяем 30 сек
@@ -39,6 +39,7 @@ _SUB_ERR_CACHE: dict[int, float] = {}   # user_id -> время последне
 _DM_PROMPT_LAST: dict[int, float] = {}  # user_id -> время последнего экрана гейта
 _BIZ_NOTIFY_LAST: dict[int, float] = {}  # owner_id -> время последнего напоминания
 _WARN_LOG_LAST: dict[str, float] = {}   # ключ -> время последнего предупреждения
+_CHANNEL_ID: Optional[int] = None       # числовой ID канала (кэш после первого успешного разрешения)
 
 
 def _warn_throttled(key: str, text: str):
@@ -75,6 +76,27 @@ def sub_kb() -> InlineKeyboardMarkup:
     ])
 
 
+async def _resolve_channel() -> Optional[int]:
+    """Числовой ID канала по юзернейму (с кэшем). None — канал недоступен.
+
+    getChat по юзернейму проходит только когда бот уже в канале. Бота
+    добавили позже — следующий вызов разрешит канал сам, без перезапуска.
+    """
+    global _CHANNEL_ID
+    if _CHANNEL_ID is not None:
+        return _CHANNEL_ID
+    if not CHANNEL_USERNAME.strip():
+        return None
+    try:
+        chat = await bot.get_chat(CHANNEL_USERNAME)
+        _CHANNEL_ID = chat.id
+        log.info(f"🛡 Канал найден: «{getattr(chat, 'title', '?')}» (ID: {_CHANNEL_ID})")
+        return _CHANNEL_ID
+    except Exception as e:
+        _warn_throttled("resolve", f"🛡 Канал @{CHANNEL_USERNAME} не найден: {str(e)[:120]}")
+        return None
+
+
 async def _api_subscribed(uid: int) -> Optional[bool]:
     """Свежая проверка через Telegram API.
 
@@ -83,10 +105,15 @@ async def _api_subscribed(uid: int) -> Optional[bool]:
     """
     if not CHANNEL_USERNAME.strip():
         return None
+    chat_id = await _resolve_channel()
+    if chat_id is None:
+        return None  # канал недоступен → fail-open (лог в _resolve_channel)
     try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, uid)
+        member = await bot.get_chat_member(chat_id, uid)
     except Exception as e:
-        _warn_throttled("sub_api", f"🛡 getChatMember uid={uid}: {e} — гейт временно открыт")
+        global _CHANNEL_ID
+        _CHANNEL_ID = None  # бота могли удалить из канала — разрешим канал заново
+        _warn_throttled("sub_api", f"🛡 getChatMember uid={uid}: {str(e)[:120]} — гейт временно открыт")
         return None
     status = member.status
     if status in ("creator", "administrator", "member"):
@@ -124,6 +151,46 @@ async def check_subscription(uid: int, fresh: bool = False) -> bool:
     return (await check_subscription_status(uid, fresh=fresh)) is not False
 
 
+async def _notify_admin_gate_misconfig(reason: str):
+    """DM админу: гейт не работает из-за настроек (бот не в канале)."""
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "⚠️ <b>Гейт подписки НЕ работает</b>\n\n"
+            f"◇ {reason}\n\n"
+            "Как исправить (1 минута):\n"
+            f"1️⃣ Открой канал @{CHANNEL_USERNAME} → <b>Управление каналом</b>\n"
+            "2️⃣ <b>Администраторы</b> → <b>Добавить администратора</b>\n"
+            f"3️⃣ Найди @{BOT_USERNAME} → добавь (права — любые)\n\n"
+            "После этого гейт заработает сразу, без перезапуска.",
+        )
+    except Exception:
+        pass
+
+
+async def startup_check():
+    """Стартовая самопроверка гейта: лог статуса + DM админу при проблеме."""
+    if not CHANNEL_USERNAME.strip():
+        log.info("🛡 Гейт подписки ВЫКЛЮЧЕН — CHANNEL_USERNAME не задан")
+        return
+    chat_id = await _resolve_channel()
+    if chat_id is None:
+        log.warning(
+            f"🛡 Гейт подписки: канал @{CHANNEL_USERNAME} не найден — бот не добавлен"
+            " в канал (админом) или юзернейм неверный"
+        )
+        await _notify_admin_gate_misconfig("канал не найден — бот не добавлен в канал")
+        return
+    try:
+        me = await bot.get_chat_member(chat_id, bot.id)
+        log.info(f"🛡 Гейт подписки: @{CHANNEL_USERNAME} — бот в канале ({me.status})")
+    except Exception as e:
+        global _CHANNEL_ID
+        _CHANNEL_ID = None
+        log.warning(f"🛡 Гейт подписки: бот НЕ в канале @{CHANNEL_USERNAME}: {str(e)[:120]}")
+        await _notify_admin_gate_misconfig("бот не найден в канале")
+
+
 @dp.message(Command("gate"))
 async def cmd_gate(msg: Message):
     """Админ-диагностика гейта: .gate — статус; .gate <ID|@user> — живая проверка юзера."""
@@ -135,16 +202,16 @@ async def cmd_gate(msg: Message):
     else:
         lines.append(f"◇ Канал: @{CHANNEL_USERNAME}")
         lines.append(f"◇ Ссылка: {CHANNEL_URL}")
-        try:
-            chat = await bot.get_chat(CHANNEL_USERNAME)
-            lines.append(f"◇ Название: «{getattr(chat, 'title', '?')}» (ID: {chat.id})")
-        except Exception as e:
-            lines.append(f"◇ Название: не получилось — {str(e)[:80]}")
-        try:
-            me = await bot.get_chat_member(CHANNEL_USERNAME, bot.id)
-            lines.append(f"◇ Бот в канале: <b>{me.status}</b>")
-        except Exception as e:
-            lines.append(f"◇ Бот в канале: <b>НЕТ</b> — {str(e)[:80]}")
+        chat_id = await _resolve_channel()
+        if chat_id is not None:
+            lines.append(f"◇ Бот в канале: <b>да</b> (ID: {chat_id})")
+            try:
+                me = await bot.get_chat_member(chat_id, bot.id)
+                lines.append(f"◇ Статус бота: {me.status}")
+            except Exception:
+                pass
+        else:
+            lines.append("◇ Бот в канале: <b>НЕТ</b> — добавь бота администратором")
     parts = (msg.text or "").split()
     if len(parts) > 1:
         target = parts[1].lstrip("@")
