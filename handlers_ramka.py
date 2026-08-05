@@ -111,8 +111,15 @@ def _ramka_crest(d, cx: int, cy: int, R: int, ss: int) -> None:
              (cx + int(R * 0.34), cy + int(R * 0.52) * sgn)],
             fill=(196, 150, 58, 255),
         )
-        d.ellipse([cx - int(R * 0.12), cy + int(R * 0.82) * sgn,
-                   cx + int(R * 0.12), cy + int(R * 1.02) * sgn],
+        # бусина на вершине ромба; y-координаты обязательно упорядочиваем —
+        # при sgn=-1 они идут сверху вниз и Pillow >= 10.4 падает
+        # с ValueError: y1 must be greater than or equal to y0
+        b_y0 = cy + int(R * 0.82) * sgn
+        b_y1 = cy + int(R * 1.02) * sgn
+        if b_y0 > b_y1:
+            b_y0, b_y1 = b_y1, b_y0
+        d.ellipse([cx - int(R * 0.12), b_y0,
+                   cx + int(R * 0.12), b_y1],
                   fill=(255, 240, 190, 255))
 
 
