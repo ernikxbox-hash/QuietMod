@@ -515,13 +515,6 @@ CMD_FEATURES: dict[str, dict] = {
         "example": "ответь на фото → .ramka",
         "note": "В ЛС с ботом: .ramka → пришли фото. В чатах: ответь на фото + .ramka"
     },
-    "draw": {
-        "title": "🎨 .draw",
-        "desc": "Генерация картинки по описанию — нейросеть Flux (Pollinations.ai), бесплатно и без регистрации.",
-        "usage": ".draw описание",
-        "example": ".draw кот в космосе",
-        "note": "Лимит 7 картинок в день на человека · работает в ЛС, бизнес-чатах и группах"
-    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -575,7 +568,7 @@ CMD_FEATURES: dict[str, dict] = {
 
 def kb_cmd() -> InlineKeyboardMarkup:
     cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka",
-                "draw", "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
+                "bold", "italic", "mono", "line", "crossed", "hidden", "quote"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]

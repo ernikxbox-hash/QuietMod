@@ -35,11 +35,6 @@ async def main():
         log.info(f"🖼 RAMKA_URL задана ({len(RAMKA_URL)} симв.) — рамка из PNG")
     else:
         log.info("🖼 RAMKA_URL не задана — .ramka рисует рамку кодом (барочный стиль)")
-    from core import POLLINATIONS_TOKEN
-    if POLLINATIONS_TOKEN.strip():
-        log.info("🎨 Pollinations подключён (токен) — .draw без водяного знака, лимит 7/день")
-    else:
-        log.info("🎨 Pollinations — .draw работает анонимно (может быть логотип на картинке; токен: auth.pollinations.ai)")
     try:
         await bot.send_message(
             ADMIN_ID,

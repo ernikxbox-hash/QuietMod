@@ -36,10 +36,6 @@ def _get_env(name: str, default: str = "") -> str:
 # raw-файл на GitHub. Пусто → рамка рисуется кодом (барочный стиль).
 # Имя переменной в Railway: RAMKA_URL (регистр больше не важен, см. _get_env).
 RAMKA_URL = _get_env("RAMKA_URL")
-# Токен Pollinations.ai (auth.pollinations.ai, бесплатная регистрация) —
-# используется ТОЛЬКО для генерации картинок (.draw): убирает водяной знак
-# и повышает лимиты. Пусто → .draw работает анонимно (1 запрос / 15 сек).
-POLLINATIONS_TOKEN = _get_env("POLLINATIONS_TOKEN")
 # Единая модель для всего бота: флагман Groq (120B, Production) — дешевле и быстрее
 # llama-3.3-70b (задепрекейчена 16.08.26). Groq сам рекомендует её как замену.
 # Распознавание фото ОТКЛЮЧЕНО: llama-4-maverick (09.03.26), llama-4-scout (17.07.26)

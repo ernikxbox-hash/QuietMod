@@ -146,13 +146,6 @@ async def init_db():
     );
     CREATE INDEX IF NOT EXISTS idx_stats_type ON bot_stats(event_type);
     CREATE INDEX IF NOT EXISTS idx_stats_created ON bot_stats(created_at);
-
-    CREATE TABLE IF NOT EXISTS image_gen_usage (
-        user_id INTEGER NOT NULL,
-        day     TEXT NOT NULL,
-        count   INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (user_id, day)
-    );
     """)
     await _conn.commit()
     try:
@@ -485,26 +478,4 @@ async def delete_stats_like(pattern: str) -> int:
         return cur.rowcount
 
 
-# ── Генерация картинок (.draw): дневной лимит на пользователя ────────
-async def get_image_usage(user_id: int, day: str) -> int:
-    """Сколько картинок пользователь уже сгенерировал за день (YYYY-MM-DD, МСК)."""
-    conn = _get_conn()
-    async with conn.execute(
-        "SELECT count FROM image_gen_usage WHERE user_id=? AND day=?",
-        (user_id, day),
-    ) as cur:
-        row = await cur.fetchone()
-        return row[0] if row else 0
-
-
-async def increment_image_usage(user_id: int, day: str) -> None:
-    """Увеличивает счётчик генераций за день на 1 (атомарный upsert)."""
-    conn = _get_conn()
-    async with _write_lock:
-        await conn.execute(
-            """INSERT INTO image_gen_usage (user_id, day, count) VALUES (?, ?, 1)
-            ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1""",
-            (user_id, day),
-        )
-        await conn.commit()
 
