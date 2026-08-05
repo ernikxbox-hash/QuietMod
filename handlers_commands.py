@@ -28,6 +28,7 @@ from functions import (
     _get_curs_cached,
     _price_estimate,
     _reply_ai_html,
+    resolve_username_to_chat,
     _send_code_files,
     business_afk,
     business_afk_last_reply,
@@ -923,8 +924,9 @@ async def on_info_inline(msg: Message):
         user_id = int(target)
         info = await _info_by_user_id(user_id)
     else:
-        # по username: getChat умеет резолвить @username → id
-        info = await _info_by_user_id(target)
+        # по username: бот не может искать юзеров через Bot API — резолвим через базу/MTProto
+        resolved = await resolve_username_to_chat(target)
+        info = await _info_by_user_id(resolved["id"]) if resolved else None
     if info is None:
         await _business_edit_message(
             msg.business_connection_id, msg.chat.id, msg.message_id,
@@ -961,7 +963,8 @@ async def on_info_dm(msg: Message):
     if target.isdigit():
         info = await _info_by_user_id(int(target))
     else:
-        info = await _info_by_user_id(target)
+        resolved = await resolve_username_to_chat(target)
+        info = await _info_by_user_id(resolved["id"]) if resolved else None
     if info is None:
         await msg.answer(
             "◇ <b>.info</b> — не удалось получить данные.\n"
@@ -1006,7 +1009,8 @@ async def on_info_group(msg: Message):
     if target.isdigit():
         info = await _info_by_user_id(int(target))
     else:
-        info = await _info_by_user_id(target)
+        resolved = await resolve_username_to_chat(target)
+        info = await _info_by_user_id(resolved["id"]) if resolved else None
     if info is None:
         await msg.reply(
             "◇ <b>.info</b> — не удалось получить данные.\n◇ Проверь: <code>.info @username</code> или <code>.info id</code>"

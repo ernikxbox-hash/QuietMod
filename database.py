@@ -130,6 +130,7 @@ async def init_db():
 
     CREATE INDEX IF NOT EXISTS idx_messages_owner ON messages(owner_id);
     CREATE INDEX IF NOT EXISTS idx_messages_owner_msg ON messages(owner_id, msg_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_username ON messages(username);
     CREATE INDEX IF NOT EXISTS idx_saved_owner ON saved_messages(owner_id);
 
     CREATE TABLE IF NOT EXISTS bot_chats (
@@ -358,6 +359,48 @@ async def count_messages_by_sender(owner_id: int, sender_id: int) -> int:
         (owner_id, sender_id),
     ) as cur:
         return (await cur.fetchone())[0]
+
+async def find_sender_id_by_username(username: str) -> Optional[int]:
+    """ID пользователя по @username — из архива, users и sled_targets.
+
+    Bot API не даёт ботам искать юзеров по юзернейму (getChat по username
+    работает только для каналов/супергрупп), но если бот уже видел человека
+    (бизнес-чат, группы, сообщения боту) — его username и id лежат у нас в
+    базе. Возвращает числовой ID или None.
+    """
+    uname = (username or "").lstrip("@").strip().lower()
+    if not uname:
+        return None
+    conn = _get_conn()
+    # 1) Архив бизнес-сообщений: username хранится с «@», sender_id — отдельно
+    async with conn.execute(
+        "SELECT sender_id FROM messages "
+        "WHERE sender_id IS NOT NULL AND LOWER(REPLACE(username,'@',''))=? "
+        "ORDER BY id DESC LIMIT 1",
+        (uname,),
+    ) as cur:
+        row = await cur.fetchone()
+        if row:
+            return row[0]
+    # 2) Кто писал самому боту (таблица users)
+    async with conn.execute(
+        "SELECT id FROM users WHERE username IS NOT NULL AND LOWER(username)=? LIMIT 1",
+        (uname,),
+    ) as cur:
+        row = await cur.fetchone()
+        if row:
+            return row[0]
+    # 3) Возможно, это цель из sled_targets (своя после unsled или чужая)
+    async with conn.execute(
+        "SELECT target_id FROM sled_targets "
+        "WHERE target_username IS NOT NULL AND LOWER(target_username)=? LIMIT 1",
+        (uname,),
+    ) as cur:
+        row = await cur.fetchone()
+        if row:
+            return row[0]
+    return None
+
 async def search_messages(owner_id: int, query: str) -> list[dict]:
     db = _get_conn()
     async with db.execute("""

@@ -30,7 +30,7 @@ from aiogram.types import (
 
 from core import bot, dp, log
 import database as db
-from functions import LINE, kb_back
+from functions import LINE, kb_back, resolve_username_to_chat
 
 SLED_CHECK_INTERVAL_SECONDS = 5 * 60     # опрос каждые 5 минут
 SLED_SEMAPHORE_LIMIT = 5                 # конкурентных getChat одновременно
@@ -49,25 +49,34 @@ def _fmt_dt(iso: str) -> str:
 
 
 async def _resolve_target(raw: str) -> dict | None:
-    """Резолвит @username или id → {id, full_name, username, bio?}."""
+    """Резолвит @username или id → {id, full_name, username, bio?}.
+
+    Bot API не даёт ботам искать юзеров по юзернейму (getChat по username
+    работает только для каналов/супергрупп), поэтому для людей идём через
+    resolve_username_to_chat: каналы — родным getChat, знакомых — по ID из
+    своей базы (архив бизнес-сообщений, users), всех остальных — через
+    MTProto-резолвер (опция, TELEGRAM_API_ID/HASH).
+    """
     s = raw.lstrip("@").strip()
     if not s:
         return None
-    try:
-        chat = await bot.get_chat(int(s) if s.isdigit() else s)
-    except Exception as e:
-        log.debug(f"🛰 sled resolve '{s}': {e}")
-        return None
-    return {
-        "id": chat.id,
-        "full_name": getattr(chat, "full_name", "") or "",
-        "username": (getattr(chat, "username", "") or "").lstrip("@"),
-        "bio": getattr(chat, "bio", "") or "",
-    }
+    if s.isdigit():
+        try:
+            chat = await bot.get_chat(int(s))
+        except Exception as e:
+            log.debug(f"🛰 sled resolve id '{s}': {e}")
+            return None
+        return {
+            "id": chat.id,
+            "full_name": getattr(chat, "full_name", "") or "",
+            "username": (getattr(chat, "username", "") or "").lstrip("@"),
+            "bio": getattr(chat, "bio", "") or "",
+        }
+    return await resolve_username_to_chat(s)
 
 
 def _target_label(t: dict) -> str:
-    name = (t.get("target_name") or t.get("target_name") or "").strip()
+    name = (t.get("target_name") or "").strip()
     uname = t.get("target_username") or ""
     if name and uname:
         return f"{name} (@{uname})"
@@ -140,7 +149,11 @@ async def on_sled(msg: Message):
     if not target:
         await msg.answer(
             f"◇ Не нашёл <code>@{html_escape(target_str)}</code>.\n"
-            f"Проверь юзернейм или открой профиль (боты/приватные)."
+            f"{LINE}\n"
+            "◇ Telegram не даёт ботам искать людей по юзернейму.\n"
+            "◇ Если вы общаетесь в подключённых чатах — просто\n"
+            "   попробуй снова: я найду его по архиву.\n"
+            "◇ Или укажи числовой ID: <code>.sled 123456789</code>"
         )
         return
     added = await db.add_sled_target(uid, target)

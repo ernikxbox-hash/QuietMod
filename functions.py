@@ -22,6 +22,7 @@ from core import (
     log,
 )
 from business_api import _business_edit_message_ex
+from mtproto_resolver import resolve_username_mtproto
 
 ai_history: dict[int, list] = {}
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
@@ -268,6 +269,47 @@ def fmt_sender(from_name: str, username: str) -> str:
     if username:
         return f"{from_name} ({username})"
     return from_name
+async def resolve_username_to_chat(username: str) -> Optional[dict]:
+    """@username → данные чата/пользователя (id, full_name, username, bio).
+
+    Bot API по юзернейму умеет находить только каналы и супергруппы —
+    людей так искать нельзя. Поэтому для людей сначала ищем их ID в
+    собственной базе (архив бизнес-сообщений, users, sled_targets), а
+    если человека бот никогда не видел — пробуем MTProto-резолвер
+    (опция, TELEGRAM_API_ID/HASH). По ID дальше работают getChat и
+    getUserProfilePhotos.
+    """
+    s = (username or "").lstrip("@").strip()
+    if not s:
+        return None
+    # 1) Знакомые люди — ID из собственной базы: без лишних запросов к API
+    target_id = await db.find_sender_id_by_username(s)
+    if target_id is not None:
+        try:
+            chat = await bot.get_chat(target_id)
+            return {
+                "id": chat.id,
+                "full_name": getattr(chat, "full_name", None) or getattr(chat, "title", "") or "",
+                "username": (getattr(chat, "username", "") or "").lstrip("@"),
+                "bio": getattr(chat, "bio", "") or "",
+            }
+        except Exception as e:
+            log.debug(f"resolve_username_to_chat: getChat(id={target_id}): {e}")
+    # 2) Каналы и супергруппы — родной getChat по юзернейму. Для юзеров
+    #    Telegram всегда отвечает 400, поэтому этот шаг идёт ПОСЛЕ базы
+    try:
+        chat = await bot.get_chat(s)
+        return {
+            "id": chat.id,
+            "full_name": getattr(chat, "full_name", None) or getattr(chat, "title", "") or "",
+            "username": (getattr(chat, "username", "") or "").lstrip("@"),
+            "bio": getattr(chat, "bio", "") or "",
+        }
+    except Exception:
+        pass
+    # 3) Любой публичный юзер — MTProto-резолвер (если настроен)
+    return await resolve_username_mtproto(s)
+
 def home_text() -> str:
     return (
         f"◆ <b>QUIET MOD</b> 👁️\n"

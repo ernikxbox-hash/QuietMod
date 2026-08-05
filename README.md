@@ -77,6 +77,7 @@ handlers_ai.py       # ИИ-консьерж в ЛС и поиск по архи
 handlers_menu.py     # ЛС-меню: сохранённые, howto, приглашения, профиль, архив, донаты
 handlers_admin.py    # админ-панель, .cmd список функций, рассылки, группы/каналы
 tasks.py             # фоновая очистка просроченных сохранённых сообщений (каждые 6 ч)
+mtproto_resolver.py  # (опция) MTProto-резолвер юзернеймов для .sled/.info — по TELEGRAM_API_ID/HASH
 requirements.txt
 Procfile             # Railway / Heroku
 railway.toml         # Railway: volume для data/bot.db
@@ -114,6 +115,9 @@ git push -u origin main
 | `CHANNEL_USERNAME` | (по умолчанию `Official_QuietMod`) юзернейм канала **без `@`** — подписка на него обязательна для доступа к боту. Пустая строка = гейт выключен |
 | `CHANNEL_URL` | (по умолчанию `https://t.me/Official_QuietMod`) ссылка, на которую ведёт кнопка «🔔 Подписаться на канал» |
 | `CHANNEL_ID` | (необязательно) числовой ID **правильного** канала (того, на который ведёт кнопка `CHANNEL_URL`). ⚠️ Не бери ID из старых логов — это может быть другой канал с тем же названием! Узнать ID нужного канала: добавить бота админом именно в него → в свежих логах `Бот добавлен в channel … (ID: …)`. Можно вообще не ставить: бот сам зафиксирует ID, как только его добавят в канал с юзернеймом `CHANNEL_USERNAME` |
+
+| `TELEGRAM_API_ID` | (необязательно) api_id из [my.telegram.org](https://my.telegram.org) → API development tools. Включает **MTProto-резолвер юзернеймов**: бот сможет находить ЛЮБОГО публичного юзера по `@username` в `.sled` и `.info` (Bot API это не умеет — только каналы). Без него `@username` ищется по базе бота — по людям, с кем уже был чат |
+| `TELEGRAM_API_HASH` | (необязательно) api_hash из my.telegram.org — пара к `TELEGRAM_API_ID` |
 
 > `BOT_USERNAME` захардкожен в `core.py` — из переменной окружения не читается.
 
