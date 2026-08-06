@@ -131,6 +131,7 @@ async def init_db():
     CREATE INDEX IF NOT EXISTS idx_messages_owner ON messages(owner_id);
     CREATE INDEX IF NOT EXISTS idx_messages_owner_msg ON messages(owner_id, msg_id);
     CREATE INDEX IF NOT EXISTS idx_messages_username ON messages(username);
+    CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_saved_owner ON saved_messages(owner_id);
 
     CREATE TABLE IF NOT EXISTS bot_chats (
@@ -458,6 +459,30 @@ async def count_ideas() -> int:
     db = _get_conn()
     async with db.execute("SELECT COUNT(*) FROM ideas") as cur:
         return (await cur.fetchone())[0]
+
+async def count_users_since(iso: str) -> int:
+    """Сколько пользователей зарегистрировалось с момента iso (включительно)."""
+    db = _get_conn()
+    async with db.execute(
+        "SELECT COUNT(*) FROM users WHERE joined >= ?", (iso,)
+    ) as cur:
+        return (await cur.fetchone())[0]
+
+async def count_messages_since(iso: str) -> int:
+    """Сколько сообщений заархивировано с момента iso (включительно)."""
+    db = _get_conn()
+    async with db.execute(
+        "SELECT COUNT(*) FROM messages WHERE created_at >= ?", (iso,)
+    ) as cur:
+        return (await cur.fetchone())[0]
+
+async def get_recent_catches(limit: int = 10) -> list[dict]:
+    """Свежие перехваты (удалённые/изменённые) по всем владельцам — лента админки."""
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT * FROM saved_messages ORDER BY id DESC LIMIT ?", (limit,)
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
 async def save_intercepted(owner_id: int, data: dict) -> int:
     now = datetime.now()
     expires = now + __import__('datetime').timedelta(days=7)
@@ -523,6 +548,10 @@ async def get_all_bot_chats() -> list[dict]:
         "SELECT * FROM bot_chats ORDER BY added_at DESC"
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
+async def count_bot_chats() -> int:
+    conn = _get_conn()
+    async with conn.execute("SELECT COUNT(*) FROM bot_chats") as cur:
+        return (await cur.fetchone())[0]
 
 async def set_setting(key: str, value: str):
     """Сохранить произвольную настройку (key-value). Гейт подписки так

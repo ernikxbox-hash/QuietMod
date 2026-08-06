@@ -1,7 +1,9 @@
 """Админка (/admin), .cmd список функций, рассылки и перехват групповых сообщений."""
 import asyncio
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
+import aiohttp
 from aiogram import F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -15,8 +17,19 @@ from html import escape as html_escape
 
 import database as db
 from business_api import _business_edit_message, _business_send_message_ex
-from core import ADMIN_ID, CHANNEL_USERNAME, GROQ_API_KEYS, S, bot, dp, log
-from handlers_gate import set_channel_id
+from core import (
+    ADMIN_ID,
+    CHANNEL_URL,
+    CHANNEL_USERNAME,
+    GROQ_API_KEYS,
+    GROQ_MODEL,
+    S,
+    bot,
+    dp,
+    get_http,
+    log,
+)
+from handlers_gate import _resolve_channel, check_subscription_status, set_channel_id
 from functions import (
     LINE,
     CMD_FEATURES,
@@ -25,6 +38,7 @@ from functions import (
     kb_admin,
     kb_back,
     kb_cmd,
+    resolve_username_to_chat,
 )
 from handlers_games import _knb_cache_member
 from handlers_intercept import (
@@ -50,6 +64,193 @@ async def cb_adm(call: CallbackQuery, state: FSMContext):
         f"▲ <b>Admin Suite</b>\n{LINE}",
         reply_markup=kb_admin(),
     )
+
+
+# ── 📊 Дашборд: главные цифры + тренд запусков за 7 дней ──────────────
+async def _render_dashboard() -> str:
+    since_24h = (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=24)).isoformat()
+    today = _stat_since(0)
+    week  = _stat_since(6)
+    results = await asyncio.gather(
+        db.count_users(),
+        db.count_users_since(since_24h),
+        db.total_messages_all(),
+        db.count_messages_since(since_24h),
+        db.count_stats("launch", today),
+        db.count_stats("launch", week),
+        db.count_stats("launch"),
+        db.count_stats("caught_deleted"),
+        db.count_stats("caught_deleted", today),
+        db.count_stats("caught_edited"),
+        db.count_stats("caught_edited", today),
+        db.count_stats("whisper_ok"),
+        db.total_stars(),
+        db.count_ideas(),
+        db.count_bot_chats(),
+        *[db.count_stats("launch", _stat_since(d)) for d in range(7)],
+    )
+    (users, users24, msgs, msgs24,
+     l_today, l_week, l_all,
+     del_all, del_today, ed_all, ed_today,
+     whisper, stars, ideas, chats) = results[:15]
+    day_counts = results[15:]
+    lines = [
+        "📊 <b>ДАШБОРД</b> · Quiet Mod 👁️",
+        f"<code>{LINE}</code>",
+        f"👥 Пользователи:  <b>{users}</b>  (+{users24} за 24ч)",
+        f"💬 Сообщений:     <b>{msgs}</b>  (+{msgs24} за 24ч)",
+        f"🚀 Запуски:        сегодня <b>{l_today}</b> · 7д <b>{l_week}</b> · всего <b>{l_all}</b>",
+        f"✕ Удалённых:      <b>{del_all}</b>  (сегодня {del_today})",
+        f"✦ Изменённых:     <b>{ed_all}</b>  (сегодня {ed_today})",
+        f"🎤 Расшифровок:   <b>{whisper}</b>",
+        f"⟡ Звёзд собрано:  <b>{stars}</b>",
+        f"✦ Предложений:    <b>{ideas}</b>",
+        f"▤ Бот в чатах:    <b>{chats}</b>",
+        f"<code>{LINE}</code>",
+        "📈 <b>Запуски · 7 дней</b>",
+    ]
+    for d in range(6, -1, -1):
+        cnt = day_counts[d]
+        label = (datetime.now(MSK) - timedelta(days=d)).strftime("%d.%m")
+        lines.append(f"{label}  {'█' * min(cnt, 12) or '▏'} {cnt}")
+    lines += [
+        f"<code>{LINE}</code>",
+        f"◐ обновлено {datetime.now(MSK).strftime('%H:%M:%S')}",
+    ]
+    return "\n".join(lines)
+
+
+@dp.callback_query(F.data == "adm_dash")
+async def cb_adm_dash(call: CallbackQuery):
+    if not _is_admin(call):
+        return
+    await call.answer()
+    await call.message.edit_text(
+        await _render_dashboard(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_dash")],
+            [InlineKeyboardButton(text="← В меню", callback_data="adm")],
+        ]),
+    )
+
+
+# ── 🛡 Гейт подписки: диагностика прямо из админки ─────────────────────
+@dp.callback_query(F.data == "adm_gate")
+async def cb_adm_gate(call: CallbackQuery):
+    if not _is_admin(call):
+        return
+    await call.answer()
+    lines = [f"🛡 <b>Гейт подписки</b>\n{LINE}"]
+    if not CHANNEL_USERNAME.strip():
+        lines.append("◇ Канал: <b>не задан</b> (CHANNEL_USERNAME) — гейт выключен")
+    else:
+        lines.append(f"◇ Канал: <a href=\"{CHANNEL_URL}\">@{CHANNEL_USERNAME}</a>")
+        chat_id = await _resolve_channel()
+        if chat_id is not None:
+            lines.append(f"◇ ID канала: <code>{chat_id}</code> (запомнен)")
+            try:
+                me = await bot.get_chat_member(chat_id, bot.id)
+                lines.append(f"◇ Бот в канале: <b>да</b> ({me.status})")
+            except Exception:
+                lines.append("◇ Бот в канале: <b>НЕТ</b> — добавь бота администратором")
+        else:
+            lines.append("◇ Бот в канале: <b>НЕТ</b> — канал не найден / бот не добавлен")
+        st = await check_subscription_status(ADMIN_ID, fresh=True)
+        if st is True:
+            lines.append("◇ Твоя подписка: ✅ подписан — доступ работает")
+        elif st is False:
+            lines.append("◇ Твоя подписка: ❌ НЕ подписан — доступ закрыт!")
+        else:
+            lines.append("◇ Твоя подписка: ⚠️ не удалось проверить (сбой API)")
+    await call.message.edit_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_gate")],
+            [InlineKeyboardButton(text="← В меню", callback_data="adm")],
+        ]),
+    )
+
+
+# ── 🔑 Живая проверка API-ключей Groq ──────────────────────────────────
+async def _probe_groq_key(key: str) -> tuple[bool, str]:
+    """Мини-запрос к Groq (1 токен): проверяем, что ключ живой."""
+    try:
+        session = get_http()
+        async with session.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={
+                "model": GROQ_MODEL,
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 1,
+            },
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status == 200:
+                return True, "работает"
+            return False, f"HTTP {resp.status}: {(await resp.text())[:100]}"
+    except Exception as e:
+        return False, str(e)[:100]
+
+
+@dp.callback_query(F.data == "adm_keys")
+async def cb_adm_keys(call: CallbackQuery):
+    if not _is_admin(call):
+        return
+    await call.answer()
+    if not GROQ_API_KEYS:
+        await call.message.edit_text(
+            f"🔑 <b>Проверка API-ключей</b>\n{LINE}\n\nКлючи не настроены.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="← В меню", callback_data="adm")]
+            ]),
+        )
+        return
+    await call.message.edit_text(
+        f"🔑 Проверяю {len(GROQ_API_KEYS)} ключ(а)…\n{LINE}\n◇ Живой запрос к Groq по каждому."
+    )
+    results = await asyncio.gather(*[_probe_groq_key(k) for k in GROQ_API_KEYS])
+    lines = [f"🔑 <b>Проверка API-ключей</b>\n{LINE}"]
+    for i, (ok, err) in enumerate(results, start=1):
+        lines.append(f"   Ключ {i}: {'✅ ' + html_escape(err) if ok else '❌ ' + html_escape(err)}")
+    lines += [
+        f"<code>{LINE}</code>",
+        "◇ Модель: " + GROQ_MODEL,
+    ]
+    await call.message.edit_text(
+        "\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⟳ Проверить ещё раз", callback_data="adm_keys")],
+            [InlineKeyboardButton(text="← В меню", callback_data="adm")],
+        ]),
+    )
+
+
+# ── 📥 Лента последних перехватов ──────────────────────────────────────
+@dp.callback_query(F.data == "adm_catches")
+async def cb_adm_catches(call: CallbackQuery):
+    if not _is_admin(call):
+        return
+    await call.answer()
+    catches = await db.get_recent_catches(10)
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_catches")],
+        [InlineKeyboardButton(text="← В меню", callback_data="adm")],
+    ])
+    if not catches:
+        await call.message.edit_text(
+            f"📥 <b>Последние перехваты</b>\n{LINE}\n\nПусто.",
+            reply_markup=back_kb,
+        )
+        return
+    lines = [f"📥 <b>Последние перехваты</b>\n{LINE}"]
+    for c in catches:
+        icon = "✕" if c["event_type"] == "deleted" else "✦"
+        name = html_escape((c.get("from_name") or "?")[:24])
+        chat = html_escape((c.get("chat") or "—")[:24])
+        preview = html_escape((c.get("text") or c.get("media_type") or "")[:40])
+        lines.append(f"{icon} <b>{name}</b> · {chat} · {c.get('date') or '—'}\n   {preview}")
+    await call.message.edit_text("\n\n".join(lines), reply_markup=back_kb)
 
 
 USERS_PAGE_SIZE = 10
@@ -86,6 +287,7 @@ async def _render_users_page(page: int) -> tuple[str, InlineKeyboardMarkup]:
     rows = []
     if nav:
         rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="adm_users_search")])
     rows.append([InlineKeyboardButton(text="← В меню", callback_data="adm")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -105,6 +307,80 @@ async def cb_adm_users_page(call: CallbackQuery):
     await call.answer()
     text, kb = await _render_users_page(page)
     await call.message.edit_text(text, reply_markup=kb)
+
+
+@dp.callback_query(F.data == "adm_users_search")
+async def cb_adm_users_search(call: CallbackQuery, state: FSMContext):
+    if not _is_admin(call):
+        return
+    await call.answer()
+    await state.set_state(S.adm_search)
+    await call.message.edit_text(
+        f"🔍 <b>Поиск пользователя</b>\n{LINE}\n\n"
+        "Пришли числовой ID или @username —\n"
+        "покажу карточку (регистрация, рефералы, архив):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="← Назад", callback_data="adm_users")]
+        ]),
+    )
+
+
+@dp.message(S.adm_search)
+async def on_adm_search(msg: Message, state: FSMContext):
+    """Карточка пользователя по ID/@username: регистрация, рефералы, архив."""
+    if not msg.from_user or msg.from_user.id != ADMIN_ID:
+        await state.clear()
+        return
+    await state.clear()
+    query = (msg.text or "").strip().lstrip("@")
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔍 Ещё поиск", callback_data="adm_users_search")],
+        [InlineKeyboardButton(text="← К списку", callback_data="adm_users")],
+        [InlineKeyboardButton(text="← В меню", callback_data="adm")],
+    ])
+    uid: Optional[int] = None
+    if query.isdigit():
+        uid = int(query)
+    else:
+        uid = await db.find_sender_id_by_username(query)
+        if uid is None:
+            resolved = await resolve_username_to_chat(query)
+            if resolved:
+                uid = resolved.get("id")
+    if uid is None:
+        await msg.answer(
+            f"🔍 <b>Поиск пользователя</b>\n{LINE}\n\n"
+            f"◇ <code>{html_escape(query or '?')}</code> — не найден.\n"
+            "◇ Попробуй числовой ID или точный @username.",
+            reply_markup=back_kb,
+        )
+        return
+    lines = [
+        f"👤 <b>ПОЛЬЗОВАТЕЛЬ</b> · <code>{uid}</code>\n{LINE}",
+        f"◇ Профиль: <a href=\"tg://user?id={uid}\">открыть в Telegram</a>",
+    ]
+    u = await db.get_user(uid)
+    if u:
+        uname = html_escape(f"@{u['username']}" if u.get("username") else "—")
+        lines.append(f"◇ Username: {uname}")
+        lines.append(f"◇ Имя: {html_escape(u.get('full_name') or '—')}")
+        try:
+            joined = datetime.fromisoformat(u["joined"]).astimezone(MSK).strftime("%d.%m.%Y · %H:%M")
+            lines.append(f"◇ Присоединился: {joined}")
+        except Exception:
+            pass
+        if u.get("referrer_id"):
+            lines.append(f"◇ По приглашению: <code>{u['referrer_id']}</code>")
+    else:
+        lines.append("◇ В базе users не найден (известен только по архиву)")
+    refs = await db.count_referrals(uid)
+    msgs_cnt = await db.count_messages(uid)
+    lines.append(f"◇ Пригласил(а): <b>{refs}</b>")
+    lines.append(f"◇ В архиве: <b>{msgs_cnt}</b> сообщений")
+    try:
+        await msg.answer("\n".join(lines), reply_markup=back_kb)
+    except Exception as e:
+        log.warning(f"adm search answer: {e}")
 
 
 def _stat_since(days: int = 0) -> str:

@@ -590,6 +590,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": "ответь на видео → .krom",
         "note": "В ЛС с ботом: .krom → пришли видео. В чатах: ответь на видео + .krom"
     },
+    "voice": {
+        "title": "🎙 .voice",
+        "desc": "Озвучка текста — ИИ-голос читает, что напишешь, и присылает голосовое сообщение (бесплатно, без ключей).",
+        "usage": ".voice текст",
+        "example": ".voice привет, как дела?",
+        "note": "До 800 символов (~60 сек). Работает в ЛС, бизнес-чатах, группах и каналах"
+    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -649,7 +656,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka", "stik", "krom",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka", "stik", "krom", "voice",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
@@ -661,12 +668,16 @@ def kb_cmd() -> InlineKeyboardMarkup:
 
 def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◆ Пользователи",   callback_data="adm_users")],
-        [InlineKeyboardButton(text="◆ Статистика",     callback_data="adm_stats")],
-        [InlineKeyboardButton(text="✦ Предложения",    callback_data="adm_ideas")],
-        [InlineKeyboardButton(text="▤ Сообщение всем", callback_data="adm_broadcast")],
+        [InlineKeyboardButton(text="📊 Дашборд",           callback_data="adm_dash")],
+        [InlineKeyboardButton(text="◆ Пользователи",       callback_data="adm_users")],
+        [InlineKeyboardButton(text="◆ Статистика",         callback_data="adm_stats")],
+        [InlineKeyboardButton(text="📥 Последние перехваты", callback_data="adm_catches")],
+        [InlineKeyboardButton(text="✦ Предложения",        callback_data="adm_ideas")],
+        [InlineKeyboardButton(text="▤ Сообщение всем",     callback_data="adm_broadcast")],
         [InlineKeyboardButton(text="▤ По группам/каналам", callback_data="adm_broadcast_groups")],
-        [InlineKeyboardButton(text="← В меню",         callback_data="back_menu")],
+        [InlineKeyboardButton(text="🛡 Гейт подписки",     callback_data="adm_gate")],
+        [InlineKeyboardButton(text="🔑 Проверка ключей",   callback_data="adm_keys")],
+        [InlineKeyboardButton(text="← В меню",             callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (
     "Ты сдержанный, элегантный ИИ-консьерж внутри Telegram-бота Quiet Mod. "

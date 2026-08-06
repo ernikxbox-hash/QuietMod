@@ -64,6 +64,7 @@ class S(StatesGroup):
     suggest_idea = State()
     broadcast = State()
     broadcast_groups = State()
+    adm_search = State()  # админка: поиск пользователя по ID/@username
     ramka = State()
     stik = State()
     krom = State()
