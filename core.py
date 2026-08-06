@@ -69,6 +69,7 @@ class S(StatesGroup):
     stik = State()
     krom = State()
     wm = State()  # 🏷 .wm (водяной знак на фото)
+    gif = State()  # 🎞 .gif (видео → гифка)
 
 _http_session: Optional[aiohttp.ClientSession] = None
 
