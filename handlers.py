@@ -13,6 +13,7 @@ import handlers_games      # .knb (Камень·Ножницы·Бумага)
 import handlers_ramka      # .ramka (золотая рамка на фото)
 import handlers_stik       # 🏷 .stik (фото → стикер)
 import handlers_krom       # 🎥 .krom (видео → кружок)
+import handlers_save       # ⏬ .save (скачивание видео TikTok/YouTube/Instagram)
 import handlers_intercept  # перехват удалённых/изменённых + голосовые (catch-all)
 import handlers_ai         # ИИ-консьерж в ЛС и поиск по архиву
 import handlers_menu       # ЛС-меню: сохранённые, howto, профиль, архив, донаты

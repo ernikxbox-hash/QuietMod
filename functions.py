@@ -590,6 +590,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": "ответь на видео → .krom",
         "note": "В ЛС с ботом: .krom → пришли видео. В чатах: ответь на видео + .krom"
     },
+    "save": {
+        "title": "⏬ .save",
+        "desc": "Скачивает видео по ссылке — TikTok, YouTube, Instagram.",
+        "usage": ".save https://…",
+        "example": ".save https://youtu.be/…",
+        "note": "До 50 МБ. Одно скачивание за раз. В ЛС с ботом: .save → пришли ссылку"
+    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -649,7 +656,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka", "stik", "krom",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka", "stik", "krom", "save",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
