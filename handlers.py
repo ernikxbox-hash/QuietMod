@@ -18,6 +18,7 @@ import handlers_krom       # 🎥 .krom (видео → кружок)
 import handlers_voice       # 🎙 .voice (текст → голосовое)
 import handlers_wm         # 🏷 .wm (водяной знак на фото)
 import handlers_gif       # 🎞 .gif (видео → гифка)
+import handlers_shrift    # ✨ .шрифт (стили текста: капс, готика, мат, хак...)
 import handlers_intercept  # перехват удалённых/изменённых + голосовые (catch-all)
 import handlers_ai         # ИИ-консьерж в ЛС и поиск по архиву
 import handlers_menu       # ЛС-меню: сохранённые, howto, профиль, архив, донаты

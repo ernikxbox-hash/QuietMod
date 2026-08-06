@@ -64,7 +64,7 @@ async def on_business_msg(msg: Message):
     # Сверяем именно с нашим bot.id: чужие боты в чате архивируются как обычно.
     if msg.from_user and msg.from_user.id == bot.id:
         return
-    if msg.text and msg.text.lower().startswith((".ai", ".spam", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".black", ".unblack", ".cmd", ".knb", ".level", ".unlevel", ".who", ".ramka", ".stik", ".krom", ".voice", ".wm", ".gif", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai", ".spam", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".black", ".unblack", ".cmd", ".knb", ".level", ".unlevel", ".who", ".ramka", ".stik", ".krom", ".voice", ".wm", ".gif", ".шрифт", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
