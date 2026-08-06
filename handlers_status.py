@@ -1,16 +1,18 @@
-"""📊 .status — статистика переписки с пользователем.
+"""📊 .status — статистика чата с пользователем (реальные данные Telegram).
 
 Три режима (как у .info):
 1. Бизнес-чат: .status (без аргумента) — статистика текущего чата
-   с собеседником. С аргументом .status @username / .status id — статистика
-   переписки с этим человеком (по всем чатам в архиве).
-2. ЛС с ботом: .status @username / .status id — статистика по человеку.
+   с собеседником. С аргументом .status @username / .status id — по человеку.
+2. ЛС с ботом: .status @username / .status id.
 3. Группа/канал: .status (ответь на сообщение) / .status @username /
-   .status id — статистика по этому человеку.
+   .status id.
 
-Данные — из архива бота (таблица messages): сколько сообщений прислал
-собеседник, сколько ответил владелец, разбивка по типам медиа, объём
-текста, первое и последнее сообщение, сколько удалённых перехвачено.
+Источник данных — MTProto (Telethon): дата создания чата, первое
+сообщение, ОБЩЕЕ число сообщений, фото/видео/голосовые/кружки/GIF/аудио/
+документы — настоящие цифры Telegram, не архив. Для полного доступа
+(личные бизнес-чаты) нужна user-сессия владельца TELEGRAM_USER_SESSION;
+с бот-токеном работают группы/каналы, где бот участник. Если MTProto
+не настроен или чат недоступен — фолбэк на архив бота (с пометкой).
 """
 from html import escape as html_escape
 from typing import Optional
@@ -22,7 +24,8 @@ from aiogram.types import Message
 import database as db
 from business_api import _business_edit_message, _get_owner_id_cached
 from core import BOT_USERNAME, dp, log
-from functions import LINE, resolve_username_to_chat
+from functions import LINE, MSK, resolve_username_to_chat
+from mtproto_resolver import get_chat_stats_mtproto
 
 # Эмодзи для типов медиа (ключи — значения MEDIA_MAP из functions.py)
 _MEDIA_EMOJI = {
@@ -43,8 +46,52 @@ def _fmt_num(n: int) -> str:
     return f"{n:,}".replace(",", " ")
 
 
+def _fmt_dt(dt) -> str:
+    """datetime → «дд.мм.гггг · чч:мм» в МСК (как fmt_msg_date)."""
+    try:
+        return dt.astimezone(MSK).strftime("%d.%m.%Y · %H:%M")
+    except Exception:
+        return str(dt)
+
+
+def _status_card_real(st: dict) -> str:
+    """Карточка из РЕАЛЬНЫХ данных Telegram (MTProto)."""
+    lines = [
+        "📊 <b>СТАТИСТИКА ЧАТА</b>",
+        f"<code>{LINE}</code>",
+        "",
+        f"◇ <b>Всего сообщений:</b> {_fmt_num(st['total'])}",
+    ]
+    if st.get("created"):
+        lines.append(f"◇ Чат создан: <code>{_fmt_dt(st['created'])}</code>")
+    if st.get("first_date"):
+        lines.append(f"◇ Первое сообщение: <code>{_fmt_dt(st['first_date'])}</code>")
+    media_rows = []
+    for key, emoji, label in (
+        ("photos",    "📷", "Фото"),
+        ("video",     "🎬", "Видео"),
+        ("voice",     "🎤", "Голосовые"),
+        ("video_note", "🌀", "Кружки"),
+        ("gif",       "🎞", "GIF"),
+        ("music",     "🎵", "Аудио"),
+        ("documents", "📄", "Документы"),
+    ):
+        cnt = st.get(key) or 0
+        if cnt:
+            media_rows.append(f"   {emoji} {label} — {_fmt_num(cnt)}")
+    if media_rows:
+        lines.append(f"<code>{LINE}</code>")
+        lines.append("◇ <b>Медиа:</b>")
+        lines.extend(media_rows)
+    lines.append(f"<code>{LINE}</code>")
+    lines.append("")
+    lines.append("◐ <i>данные Telegram</i>")
+    lines.append(f"— 👁️ @{BOT_USERNAME}")
+    return "\n".join(lines)
+
+
 def _status_card(st: dict, chat_name: str = "") -> str:
-    """HTML-карточка статистики. chat_name — название чата, если известен."""
+    """HTML-карточка статистики (фолбэк по архиву). chat_name — название чата."""
     # имена и названия чатов — пользовательские данные: экранируем HTML
     name = html_escape(st["name"] or "Неизвестно")
     chat_name = html_escape(chat_name)
@@ -77,6 +124,7 @@ def _status_card(st: dict, chat_name: str = "") -> str:
     if st["last"]:
         lines.append(f"◇ Последнее: <code>{st['last']}</code>")
     lines.append("")
+    lines.append("◐ <i>по архиву бота</i>")
     lines.append(f"— 👁️ @{BOT_USERNAME}")
     return "\n".join(lines)
 
@@ -98,20 +146,29 @@ def _status_target_from_text(msg: Message) -> Optional[str]:
 
 async def _status_for(owner_id: int, target: str,
                       chat_name: str = "") -> tuple[Optional[str], Optional[str]]:
-    """Считает статистику по цели: (карточка, ошибка-подсказка)."""
+    """Считает статистику по цели: (карточка, ошибка-подсказка).
+
+    Сначала — реальные данные Telegram (MTProto): дата создания чата,
+    первое сообщение, общее число сообщений и медиа-счётчики. Если MTProto
+    не настроен или чат недоступен — фолбэк на архив бота.
+    """
     if target.isdigit():
         peer_id = int(target)
-        st = await db.chat_stats(owner_id, peer_id, chat_name=chat_name)
-        if st is None:
-            return None, "◇ <b>.status</b> — этого человека нет в архиве."
-        return _status_card(st, chat_name=chat_name), None
-    resolved = await resolve_username_to_chat(target)
-    if not resolved:
-        return None, "◇ <b>.status</b> — не удалось найти этого пользователя."
-    peer_id = resolved.get("id")
+    else:
+        resolved = await resolve_username_to_chat(target)
+        if not resolved:
+            return None, "◇ <b>.status</b> — не удалось найти этого пользователя."
+        peer_id = resolved.get("id")
+    real = await get_chat_stats_mtproto(peer_id)
+    if real is not None:
+        return _status_card_real(real), None
     st = await db.chat_stats(owner_id, peer_id, chat_name=chat_name)
     if st is None:
-        return None, "◇ <b>.status</b> — этого человека нет в архиве."
+        return None, (
+            "◇ <b>.status</b> — нет данных: Telegram-статистика недоступна "
+            "(MTProto не настроен или чат вне доступа бота), и этого человека "
+            "нет в архиве."
+        )
     return _status_card(st, chat_name=chat_name), None
 
 
