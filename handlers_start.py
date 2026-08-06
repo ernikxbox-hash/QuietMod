@@ -15,12 +15,26 @@ from handlers_gate import SUB_GATE_TEXT, check_subscription, sub_kb
 
 @dp.business_connection()
 async def on_business_connection(conn: BusinessConnection):
-    """Предзагружаем владельца подключения — мьют/перехват работают мгновенно с первого сообщения."""
+    """Предзагружаем владельца подключения — мьют/перехват работают мгновенно с первого сообщения.
+
+    Заодно фиксируем, кто именно подключил бота к бизнес-аккаунту: Telegram сам
+    присылает юзера в апдейте business_connection — так в админке видно реальную
+    базу пользователей, а не только тех, кто писал /start.
+    """
     try:
         _BC_OWNER_CACHE[conn.id] = (
             conn.user.id,
             asyncio.get_running_loop().time() + _BC_OWNER_TTL_SECONDS,
         )
+        try:
+            await db.upsert_business_owner(
+                conn.user.id,
+                conn.user.username or "",
+                conn.user.full_name or "",
+                conn.id,
+            )
+        except Exception as e:
+            log.warning(f"business owner save: {e}")
     except Exception:
         pass
 

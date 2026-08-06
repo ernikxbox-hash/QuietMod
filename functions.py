@@ -684,6 +684,7 @@ def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="◆ Дашборд",           callback_data="adm_dash")],
         [InlineKeyboardButton(text="◆ Пользователи",       callback_data="adm_users")],
+        [InlineKeyboardButton(text="◆ Бизнес",             callback_data="adm_biz")],
         [InlineKeyboardButton(text="◆ Статистика",         callback_data="adm_stats")],
         [InlineKeyboardButton(text="◆ Последние перехваты", callback_data="adm_catches")],
         [InlineKeyboardButton(text="✦ Предложения",        callback_data="adm_ideas")],

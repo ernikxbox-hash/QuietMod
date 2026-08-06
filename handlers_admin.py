@@ -87,17 +87,19 @@ async def _render_dashboard() -> str:
         db.total_stars(),
         db.count_ideas(),
         db.count_bot_chats(),
+        db.count_business_owners(),
         *[db.count_stats("launch", _stat_since(d)) for d in range(7)],
     )
     (users, users24, msgs, msgs24,
      l_today, l_week, l_all,
      del_all, del_today, ed_all, ed_today,
-     whisper, stars, ideas, chats) = results[:15]
-    day_counts = results[15:]
+     whisper, stars, ideas, chats, biz) = results[:16]
+    day_counts = results[16:]
     lines = [
         "◆ <b>ДАШБОРД</b> · Quiet Mod 👁️",
         f"<code>{LINE}</code>",
         f"◇ Пользователи:  <b>{users}</b>  (+{users24} за 24ч)",
+        f"◇ Бизнес:        <b>{biz}</b>  подключений",
         f"◇ Сообщений:     <b>{msgs}</b>  (+{msgs24} за 24ч)",
         f"◇ Запуски:        сегодня <b>{l_today}</b> · 7д <b>{l_week}</b> · всего <b>{l_all}</b>",
         f"✕ Удалённых:      <b>{del_all}</b>  (сегодня {del_today})",
@@ -254,6 +256,43 @@ async def cb_adm_catches(call: CallbackQuery):
         preview = html_escape((c.get("text") or c.get("media_type") or "")[:40])
         lines.append(f"{icon} <b>{name}</b> · {chat} · {c.get('date') or '—'}\n   {preview}")
     await call.message.edit_text("\n\n".join(lines), reply_markup=back_kb)
+
+
+# ── ◆ Бизнес: кто подключил бота к бизнес-аккаунту ─────────────────────
+@dp.callback_query(F.data == "adm_biz")
+async def cb_adm_biz(call: CallbackQuery):
+    """Список пользователей, подключивших бота к бизнесу (реальная база)."""
+    if not _is_admin(call):
+        return
+    await call.answer()
+    total = await db.count_business_owners()
+    owners = await db.get_business_owners(20)
+    lines = [f"◆ <b>Бизнес-подключения</b> · <b>{total}</b>\n{LINE}"]
+    if not owners:
+        lines.append("\nПусто — пока никто не подключал бота к бизнесу.\n\n"
+                     "Как только кто-то подключит бота через «Подключение» —\n"
+                     "он появится здесь с именем и @username.")
+    else:
+        for o in owners:
+            uname = f"@{o['username']}" if o.get("username") else "—"
+            name = html_escape((o.get("full_name") or "—")[:24])
+            try:
+                seen = datetime.fromisoformat(o["last_seen"]).astimezone(MSK).strftime("%d.%m · %H:%M")
+            except Exception:
+                seen = "—"
+            lines.append(
+                f"◇ <b>{html_escape(uname)}</b>  (ID {o['user_id']})\n"
+                f"   {name} · активен: {seen}"
+            )
+        if total > len(owners):
+            lines.append(f"\n◇ Показаны первые {len(owners)} из {total}")
+    await call.message.edit_text(
+        "\n\n".join(lines),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_biz")],
+            [InlineKeyboardButton(text="← В меню", callback_data="adm")],
+        ]),
+    )
 
 
 USERS_PAGE_SIZE = 10

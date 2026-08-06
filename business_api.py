@@ -1,6 +1,7 @@
 import asyncio
 from typing import Optional
 import aiohttp
+import database as db
 from core import BOT_TOKEN, bot, get_http, log
 
 # ── Владелец business-connection (кэш 10 мин) ─────────────────────────
@@ -20,6 +21,18 @@ async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
         log.error(f"get_business_connection ({ctx}): {e}")
         return None
     _BC_OWNER_CACHE[conn_id] = (owner_id, now + _BC_OWNER_TTL_SECONDS)
+    # Дополнительно фиксируем владельца в БД: апдейт business_connection приходит
+    # только при подключении/изменении, а этот кэш-промах случается на первом же
+    # бизнес-сообщении — так в админке видны и подключения, сделанные ДО деплоя.
+    try:
+        await db.upsert_business_owner(
+            owner_id,
+            (conn.user.username or "") if conn.user else "",
+            (conn.user.full_name or "") if conn.user else "",
+            conn_id,
+        )
+    except Exception as e:
+        log.warning(f"business owner upsert ({ctx}): {e}")
     return owner_id
 
 # ── Business-методы Telegram Bot API (через общую aiohttp-сессию) ─────

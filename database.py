@@ -141,6 +141,15 @@ async def init_db():
         added_at    TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS business_owners (
+        user_id     INTEGER PRIMARY KEY,
+        username    TEXT,
+        full_name   TEXT,
+        conn_id     TEXT,
+        first_seen  TEXT NOT NULL,
+        last_seen   TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bot_stats (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         event_type  TEXT NOT NULL,
@@ -552,6 +561,36 @@ async def count_bot_chats() -> int:
     conn = _get_conn()
     async with conn.execute("SELECT COUNT(*) FROM bot_chats") as cur:
         return (await cur.fetchone())[0]
+
+# ─── Бизнес-подключения: кто подключил бота к бизнес-аккаунту ────────
+async def upsert_business_owner(uid: int, username: str, full_name: str, conn_id: str):
+    """Фиксирует владельца бизнес-подключения (кто подключил бота)."""
+    conn = _get_conn()
+    now = datetime.now().isoformat()
+    async with _write_lock:
+        await conn.execute("""
+            INSERT INTO business_owners (user_id, username, full_name, conn_id, first_seen, last_seen)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username  = excluded.username,
+                full_name = excluded.full_name,
+                conn_id   = excluded.conn_id,
+                last_seen = excluded.last_seen
+        """, (uid, username or "", full_name or "", conn_id or "", now, now))
+        await conn.commit()
+async def count_business_owners() -> int:
+    """Сколько уникальных пользователей когда-либо подключали бота к бизнесу."""
+    conn = _get_conn()
+    async with conn.execute("SELECT COUNT(*) FROM business_owners") as cur:
+        return (await cur.fetchone())[0]
+async def get_business_owners(limit: int = 20) -> list[dict]:
+    """Список владельцев бизнес-подключений (свежие сверху)."""
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT * FROM business_owners ORDER BY last_seen DESC LIMIT ?",
+        (limit,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
 
 async def set_setting(key: str, value: str):
     """Сохранить произвольную настройку (key-value). Гейт подписки так
