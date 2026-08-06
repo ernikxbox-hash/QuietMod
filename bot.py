@@ -30,6 +30,12 @@ async def _sync_bot_chats():
 async def main():
     await db.init_db()
     await db.purge_expired_saved()
+    try:
+        purged = await db.purge_bot_noise(bot.id)
+        if purged:
+            log.info(f"🧹 Из архива удалён бот-мусор: {purged} записей")
+    except Exception as e:
+        log.warning(f"🧹 purge bot noise: {e}")
     await load_black_state()
     await db.record_stat("launch")
     log.info("📊 Статистика: запуск зафиксирован")

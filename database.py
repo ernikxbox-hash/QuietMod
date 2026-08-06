@@ -701,6 +701,28 @@ async def purge_expired_saved():
     async with _write_lock:
         await conn.execute("DELETE FROM saved_messages WHERE expires_at <= ?", (now,))
         await conn.commit()
+
+
+async def purge_bot_noise(bot_id: int) -> int:
+    """Чистит архив от бот-мусора: статусы «◆/◇ …», ответы с подписью 👁️
+    и сообщения самого бота. Раньше они могли попасть в кэш и давать ложные
+    «удалённые». Команды владельца (текст с точки) намеренно НЕ трогаем:
+    их удаления и так отсекаются в on_deleted проверкой sender_id == owner_id,
+    а настоящие сообщения собеседника, начинающиеся с точки, обязаны
+    оставаться в архиве, чтобы их удаление перехватывалось.
+    Возвращает число удалённых.
+    """
+    conn = _get_conn()
+    async with _write_lock:
+        cur = await conn.execute(
+            "DELETE FROM messages WHERE "
+            "sender_id=? OR "
+            "text LIKE '◆%' OR text LIKE '◇%' OR "
+            "text LIKE '%— 👁️ @%'",
+            (bot_id,),
+        )
+        await conn.commit()
+        return cur.rowcount
 async def record_stat(event_type: str, detail: str = ""):
     """Асинхронно записывает событие в bot_stats (через батчер)."""
     _get_conn()

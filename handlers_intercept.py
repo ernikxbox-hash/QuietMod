@@ -59,7 +59,12 @@ def _extract_media(msg: Message) -> tuple[str, Optional[str]]:
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".black", ".unblack", ".cmd", ".knb", ".ramka", ".stik", ".krom", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    # Сообщения от самого бота (отправленные через бизнес-подключение) в архив
+    # не попадают — иначе бот сам себе шлёт «удалённое» при обработке команд.
+    # Сверяем именно с нашим bot.id: чужие боты в чате архивируются как обычно.
+    if msg.from_user and msg.from_user.id == bot.id:
+        return
+    if msg.text and msg.text.lower().startswith((".ai", ".spam", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".black", ".unblack", ".cmd", ".knb", ".level", ".unlevel", ".who", ".ramka", ".stik", ".krom", ".voice", ".wm", ".gif", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
@@ -183,11 +188,17 @@ async def on_edited_business_msg(msg: Message):
     new_text = msg.text or msg.caption or ""
     is_bot_edit = (
         f"— 👁️ @{BOT_USERNAME}" in new_text
-        or new_text.strip().startswith("◆")
+        or new_text.strip().startswith(("◆", "◇"))  # статусы и ошибки бота («◆ · · ·», «◇ Не получилось…»)
     )
     sender_id = msg.from_user.id if msg.from_user else None
     is_owner_edit = (sender_id == owner_id)
-    if not is_bot_edit and not is_owner_edit:
+    # Служебные сообщения бота (статусы «◆ · · ·», ответы с подписью 👁️)
+    # и наши команды (текст с точки) не попадают в архив и не перехватываются:
+    # иначе бот сам себе шлёт «удалённое/изменённое» при обработке .stik/.krom и т.п.
+    # Редактирование сделал сам бот (статусы «◆ · · ·», ответы) — в архив не попадает.
+    if is_bot_edit or (msg.from_user and msg.from_user.id == bot.id):
+        return
+    if not is_owner_edit:
         cached = await db.get_message(owner_id, msg.message_id)
         old_text = cached["text"] if cached else None
         sender = fmt_sender(
@@ -221,6 +232,9 @@ async def on_edited_business_msg(msg: Message):
         })
         await db.record_stat("caught_edited")
         await _send_notify(owner_id, notify, reply_markup=kb_notify(save_id))
+    # Обычное редактирование (собеседник или владелец) — обновляем архив,
+    # чтобы при удалении показать свежий текст. Бот-статусы («◆ · · ·» и т.п.)
+    # уже отсеяны выше — они в архив не попадают.
     media_type, file_id = _extract_media(msg)
     await db.save_message(owner_id, {
         "msg_id":     msg.message_id,
@@ -233,7 +247,7 @@ async def on_edited_business_msg(msg: Message):
         "media_type": media_type,
         "file_id":    file_id,
     })
-    log.debug(f"✏️ updated msg={msg.message_id} owner={owner_id} bot_edit={is_bot_edit}")
+    log.debug(f"✏️ updated msg={msg.message_id} owner={owner_id}")
 
 
 # ── Расшифровка голосовых (Whisper) ───────────────────────────────────
@@ -346,6 +360,18 @@ async def on_deleted(event: BusinessMessagesDeleted):
             continue
         if cached.get("sender_id") == owner_id:
             log.info(f"⏭ skip own deleted msg={msg_id} owner={owner_id}")
+            continue
+        # Сообщения, отправленные ботом (id бота как отправитель) — не перехватываем.
+        if cached.get("sender_id") == bot.id:
+            log.info(f"⏭ skip bot-sent deleted msg={msg_id} owner={owner_id}")
+            continue
+        # Бот-статусы («◆ · · ·», «◇ …», ответы с подписью 👁️) в архив не
+        # попадают (см. on_edited), но на всякий случай защищаемся и здесь.
+        # Сообщения собеседника, начинающиеся с точки, НЕ пропускаем — это
+        # реальные удаления.
+        cached_text = (cached.get("text") or "").strip()
+        if cached_text.startswith(("◆", "◇")) or f"— 👁️ @{BOT_USERNAME}" in cached_text:
+            log.info(f"⏭ skip bot/service deleted msg={msg_id} owner={owner_id}")
             continue
         sender = fmt_sender(cached["from_name"], cached["username"])
         text = (
