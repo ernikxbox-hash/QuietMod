@@ -67,7 +67,6 @@ class S(StatesGroup):
     ramka = State()
     stik = State()
     krom = State()
-    save = State()
 
 _http_session: Optional[aiohttp.ClientSession] = None
 
