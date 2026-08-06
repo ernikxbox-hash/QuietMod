@@ -1,18 +1,16 @@
-"""🛰 MTProto-слой (опция): резолв юзернеймов + реальная статистика чатов.
+"""🛰 MTProto-слой (опция): резолв юзернеймов для .sled/.info.
 
-Bot API не умеет двух вещей, которые умеет нативный Telegram-протокол:
-1. Искать юзеров по @username (getChat по username — только каналы/группы).
-2. Считать сообщения в чате и видеть дату создания — для .status нужны
-   реальные цифры Telegram, а не то, что успел собрать архив.
+Bot API умеет находить по @username только каналы и супергруппы — людей
+так искать нельзя. MTProto (Telethon) умеет резолвить ЛЮБОГО публичного
+юзера: `@username` → id/full_name в .sled, .info и других командах.
 
 Включение: env TELEGRAM_API_ID и TELEGRAM_API_HASH (my.telegram.org →
 API development tools). Источник сессии:
-- TELEGRAM_USER_SESSION (рекомендуется для .status): StringSession
-  владельца — полный доступ ко всем его чатам, включая личные бизнес-
-  чаты. Получить строку: session-string от Telethon (qr-логин или
-  телефон).
-- иначе — бот-токен: работает для резолва юзернеймов и для групп/
-  каналов, где бот участник; личные чаты недоступны.
+- TELEGRAM_USER_SESSION (рекомендуется): StringSession владельца — резолв
+  любых публичных юзеров, даже тех, кого бот никогда не видел. Получить
+  строку: session-string от Telethon (qr-логин или телефон).
+- иначе — бот-токен: работает для резолва и для групп/каналов, где бот
+  участник; личные чаты и чужие юзеры недоступны.
 
 Любая ошибка MTProto никогда не роняет бота: функции возвращают None,
 дальше идёт запасной путь (база / архив).
@@ -25,7 +23,9 @@ from core import BOT_TOKEN, log
 
 _API_ID = os.environ.get("TELEGRAM_API_ID", "").strip()
 _API_HASH = os.environ.get("TELEGRAM_API_HASH", "").strip()
-# StringSession владельца — полный доступ к его чатам (для .status).
+# StringSession владельца — полный доступ к его аккаунту: резолв любых
+# публичных юзеров по @username (для .sled/.info), даже если бот их
+# никогда не видел. С бот-токеном MTProto видит только то, что видит бот.
 _USER_SESSION = os.environ.get("TELEGRAM_USER_SESSION", "").strip()
 
 _client = None                       # TelegramClient — синглтон на процесс
@@ -67,87 +67,6 @@ async def _get_client():
             log.warning(f"🛰 MTProto client init: {e}")
             _client = None
     return _client
-
-
-# ── Реальная статистика чата для .status ──────────────────────────
-# Bot API не умеет считать сообщения в чате — только MTProto. Кэш 60 сек,
-# чтобы частые .status не дёргали API на каждый вызов.
-_chat_stats_cache: dict[int, tuple[float, dict]] = {}
-_CHAT_STATS_TTL = 60.0
-_CHAT_STATS_MAX = 200
-
-
-async def get_chat_stats_mtproto(peer_id: int) -> Optional[dict]:
-    """Реальная статистика чата через MTProto: (id, дата создания, счётчики).
-
-    Возвращает None, если MTProto не настроен или чат недоступен
-    (для user-сессии — любой личный чат владельца; для бот-токена —
-    только группы/каналы, где бот участник).
-
-    Ключи: peer_id, created (datetime|None — дата создания чата),
-    first_date (datetime|None — первое сообщение), total, photos, video,
-    voice, video_note, gif, music, documents.
-    """
-    if not mtproto_enabled():
-        return None
-    now = asyncio.get_running_loop().time()
-    cached = _chat_stats_cache.get(peer_id)
-    if cached and now - cached[0] < _CHAT_STATS_TTL:
-        return cached[1]
-    try:
-        client = await _get_client()
-        if client is None:
-            return None
-        ent = await client.get_entity(peer_id)
-        # счётчики: total — все сообщения; фильтры — по типам медиа
-        from telethon.tl.patched import (
-            InputMessagesFilterDocument,
-            InputMessagesFilterGif,
-            InputMessagesFilterMusic,
-            InputMessagesFilterPhotos,
-            InputMessagesFilterRoundVideo,
-            InputMessagesFilterVideo,
-            InputMessagesFilterVoice,
-        )
-
-        async def _count(flt=None) -> int:
-            # limit=0 — единственный способ получить .total в Telethon:
-            # он возвращает пустой список с count из ответа API. При limit=1
-            # .total не заполняется и все счётчики молча стали бы 0.
-            try:
-                msgs = await client.get_messages(ent, limit=0, search_filter=flt)
-                return getattr(msgs, "total", 0) or 0
-            except Exception:
-                return 0
-
-        # первое сообщение (дата старта переписки)
-        first = None
-        try:
-            msgs = await client.get_messages(ent, limit=1, reverse=True)
-            if msgs:
-                first = msgs[0].date
-        except Exception:
-            pass
-        stats = {
-            "peer_id": peer_id,
-            "created": getattr(ent, "date", None),
-            "first_date": first,
-            "total": await _count(),
-            "photos": await _count(InputMessagesFilterPhotos()),
-            "video": await _count(InputMessagesFilterVideo()),
-            "voice": await _count(InputMessagesFilterVoice()),
-            "video_note": await _count(InputMessagesFilterRoundVideo()),
-            "gif": await _count(InputMessagesFilterGif()),
-            "music": await _count(InputMessagesFilterMusic()),
-            "documents": await _count(InputMessagesFilterDocument()),
-        }
-        if len(_chat_stats_cache) >= _CHAT_STATS_MAX:
-            _chat_stats_cache.clear()
-        _chat_stats_cache[peer_id] = (now, stats)
-        return stats
-    except Exception as e:
-        log.warning(f"🛰 mtproto chat stats peer={peer_id}: {e}")
-        return None
 
 
 async def resolve_username_mtproto(username: str) -> Optional[dict]:

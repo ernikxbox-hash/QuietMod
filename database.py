@@ -176,6 +176,11 @@ async def init_db():
         created_at  TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_sled_events_user_target ON sled_events(user_id, target_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
     """)
     await _conn.commit()
     try:
@@ -360,96 +365,6 @@ async def count_messages_by_sender(owner_id: int, sender_id: int) -> int:
     ) as cur:
         return (await cur.fetchone())[0]
 
-async def chat_stats(owner_id: int, peer_id: int, chat_name: str = "") -> Optional[dict]:
-    """Статистика переписки владельца с собеседником peer_id.
-
-    chat_name — если задан, считаем только в этом чате (по тексту chat);
-    иначе — по всем чатам, где встречался собеседник.
-    Возвращает None, если собеседника нет в архиве.
-    """
-    conn = _get_conn()
-    where = "owner_id=? AND sender_id=?"
-    params: list = [owner_id, peer_id]
-    if chat_name:
-        where += " AND chat=?"
-        params.append(chat_name)
-    async with conn.execute(
-        f"SELECT COUNT(*), COALESCE(SUM(LENGTH(text)),0) FROM messages WHERE {where}",
-        params,
-    ) as cur:
-        row = await cur.fetchone()
-    if not row or row[0] == 0:
-        return None
-    peer_total, chars = row
-    # первое/последнее — по AUTOINCREMENT id (дата хранится как «дд.мм.гггг»,
-    # строковый MIN/MAX был бы неверен через границы месяцев и лет)
-    async with conn.execute(
-        f"SELECT date FROM messages WHERE {where} ORDER BY id ASC LIMIT 1", params
-    ) as cur:
-        r = await cur.fetchone()
-    first_d = r[0] if r else ""
-    async with conn.execute(
-        f"SELECT date FROM messages WHERE {where} ORDER BY id DESC LIMIT 1", params
-    ) as cur:
-        r = await cur.fetchone()
-    last_d = r[0] if r else ""
-    # ответы владельца в тех же чатах (где писал собеседник)
-    if chat_name:
-        you_where = "owner_id=? AND sender_id=? AND chat=?"
-        you_params: list = [owner_id, owner_id, chat_name]
-    else:
-        you_where = ("owner_id=? AND sender_id=? AND chat IN "
-                     "(SELECT DISTINCT chat FROM messages WHERE owner_id=? AND sender_id=?)")
-        you_params = [owner_id, owner_id, owner_id, peer_id]
-    async with conn.execute(
-        f"SELECT COUNT(*) FROM messages WHERE {you_where}", you_params
-    ) as cur:
-        you_total = (await cur.fetchone())[0]
-    # медиа-разбивка сообщений собеседника
-    media: dict[str, int] = {}
-    async with conn.execute(
-        f"SELECT media_type, COUNT(*) FROM messages WHERE {where} GROUP BY media_type",
-        params,
-    ) as cur:
-        for mt, c in await cur.fetchall():
-            media[mt or "◆ Текст"] = c
-    # имя/юзернейм — из последнего сообщения собеседника
-    async with conn.execute(
-        f"SELECT from_name, username FROM messages WHERE {where} ORDER BY id DESC LIMIT 1",
-        params,
-    ) as cur:
-        row = await cur.fetchone()
-    name = row[0] if row else "Неизвестно"
-    username = row[1] if row else ""
-    # перехваченные удалённые от собеседника; если нет ни username, ни
-    # названия чата — не считаем (иначе засчитаем чужие удаления)
-    deleted = 0
-    if chat_name:
-        async with conn.execute(
-            "SELECT COUNT(*) FROM saved_messages "
-            "WHERE owner_id=? AND event_type='deleted' AND chat=?",
-            (owner_id, chat_name),
-        ) as cur:
-            deleted = (await cur.fetchone())[0]
-    elif username:
-        async with conn.execute(
-            "SELECT COUNT(*) FROM saved_messages "
-            "WHERE owner_id=? AND event_type='deleted' AND username=?",
-            (owner_id, username),
-        ) as cur:
-            deleted = (await cur.fetchone())[0]
-    return {
-        "name": name,
-        "username": username,
-        "peer": peer_total,
-        "you": you_total,
-        "media": media,
-        "first": first_d,
-        "last": last_d,
-        "chars": chars,
-        "deleted": deleted,
-    }
-
 async def find_sender_id_by_username(username: str) -> Optional[int]:
     """ID пользователя по @username — из архива, users и sled_targets.
 
@@ -599,6 +514,30 @@ async def get_all_bot_chats() -> list[dict]:
         "SELECT * FROM bot_chats ORDER BY added_at DESC"
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
+
+async def set_setting(key: str, value: str):
+    """Сохранить произвольную настройку (key-value). Гейт подписки так
+    хранит ID канала — чтобы не терять его после рестарта бота."""
+    conn = _get_conn()
+    async with _write_lock:
+        await conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        await conn.commit()
+async def get_setting(key: str) -> Optional[str]:
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT value FROM settings WHERE key=?", (key,)
+    ) as cur:
+        row = await cur.fetchone()
+        return row[0] if row else None
+async def delete_setting(key: str):
+    conn = _get_conn()
+    async with _write_lock:
+        await conn.execute("DELETE FROM settings WHERE key=?", (key,))
+        await conn.commit()
 
 async def purge_expired_saved():
     conn = _get_conn()

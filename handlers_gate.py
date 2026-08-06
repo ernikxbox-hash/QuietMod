@@ -17,6 +17,9 @@
 - Ошибки Telegram API (бот не добавлен в канал, сеть) НЕ блокируют бота:
   гейт временно открывается. Лог ошибки пишется не чаще раза в 5 минут,
   а при старте админу приходит уведомление, если бота нет в канале.
+- Числовой ID канала запоминается в БД (таблица settings): бота достаточно
+  добавить в канал ОДИН раз — после рестарта канал не «теряется», и
+  заново добавлять бота не нужно.
 """
 import time
 from html import escape as html_escape
@@ -25,6 +28,7 @@ from typing import Optional
 from aiogram import BaseMiddleware, F
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+import database as db
 from business_api import _get_owner_id_cached
 from core import ADMIN_ID, BOT_USERNAME, CHANNEL_ID, CHANNEL_URL, CHANNEL_USERNAME, bot, dp, log
 from functions import LINE, home_msg, home_text_for, kb_main
@@ -75,39 +79,87 @@ def sub_kb() -> InlineKeyboardMarkup:
     ])
 
 
-def set_channel_id(chat_id: int):
+_GATE_ID_KEY = "gate_channel_id"
+_DB_ID_BAD = False  # ID из БД оказался нерабочим — не перечитывать и не сверять его каждый цикл
+
+
+async def set_channel_id(chat_id: int):
     """Зафиксировать числовой ID канала (когда бот добавлен в него админом).
 
     Вызывается из on_my_chat_member: бот сам запоминает канал гейта, как
-    только его туда добавили — без переменных окружения и перезапусков.
+    только его туда добавили. ID сохраняется в БД — после рестарта канал
+    не «теряется», и бота не нужно добавлять заново каждый раз.
     """
-    global _CHANNEL_ID
+    global _CHANNEL_ID, _DB_ID_BAD
     _CHANNEL_ID = chat_id
+    _DB_ID_BAD = False
+    try:
+        await db.set_setting(_GATE_ID_KEY, str(chat_id))
+    except Exception as e:
+        log.warning(f"🛡 set_channel_id persist: {e}")
     log.info(f"🛡 Гейт: канал зафиксирован автоматически (ID: {_CHANNEL_ID})")
 
 
 async def _resolve_channel() -> Optional[int]:
-    """Числовой ID канала по юзернейму (с кэшем). None — канал недоступен.
+    """Числовой ID канала гейта. Порядок: кэш → CHANNEL_ID (env) → БД → @username.
 
-    getChat по юзернейму проходит только когда бот уже в канале. Бота
-    добавили позже — следующий вызов разрешит канал сам, без перезапуска.
+    ID, зафиксированный при добавлении бота в канал, хранится в БД — после
+    рестарта канал не «теряется» (раньше бота приходилось добавлять заново
+    каждый раз). Запись из БД сверяется с юзернеймом: если владелец сменил
+    канал гейта — разрешаем заново и запоминаем новый ID.
     """
-    global _CHANNEL_ID
+    global _CHANNEL_ID, _DB_ID_BAD
     if _CHANNEL_ID is not None:
         return _CHANNEL_ID
-    # Прямой числовой ID из env (CHANNEL_ID) — надёжнее юзернейма, если
-    # у канала сменится юзернейм или бот не может его разрешить.
+    # 1) Прямой числовой ID из env (CHANNEL_ID) — самый надёжный: не зависит
+    #    ни от юзернейма, ни от того, видит ли бот канал.
     if CHANNEL_ID:
         try:
             _CHANNEL_ID = int(CHANNEL_ID)
             return _CHANNEL_ID
         except ValueError:
             pass
+    # 2) ID из БД — бота когда-то добавляли в канал гейта
+    if not _DB_ID_BAD:
+        try:
+            saved = await db.get_setting(_GATE_ID_KEY)
+            if saved:
+                cid = int(saved)
+                try:
+                    chat = await bot.get_chat(cid)
+                    uname = (getattr(chat, "username", "") or "").lstrip("@").lower()
+                    if uname == CHANNEL_USERNAME.lower():
+                        _CHANNEL_ID = cid
+                        log.info(f"🛡 Канал найден в БД (ID: {_CHANNEL_ID})")
+                        return _CHANNEL_ID
+                    # ID из БД — это другой канал (владелец сменил канал гейта):
+                    # чистим протухшую запись и разрешаем заново по юзернейму
+                    log.info(f"🛡 ID {cid} из БД — это канал @{uname}, а гейт на @{CHANNEL_USERNAME}: разрешаю заново")
+                    try:
+                        await db.delete_setting(_GATE_ID_KEY)
+                    except Exception:
+                        pass
+                except Exception:
+                    # Канал недоступен по ID (бота убрали / приватный): помечаем
+                    # ID нерабочим — следующие циклы пропустят сверку и просто
+                    # покажут fail-open, пока бота не вернут в канал
+                    _DB_ID_BAD = True
+                    _CHANNEL_ID = cid
+                    log.info(f"🛡 Канал из БД (ID: {_CHANNEL_ID}) — сверка недоступна, ID помечен нерабочим")
+                    return _CHANNEL_ID
+        except Exception as e:
+            log.warning(f"🛡 resolve channel from DB: {e}")
+    # 3) Юзернейм: getChat по username проходит, только когда бот в канале
     if not CHANNEL_USERNAME.strip():
         return None
     try:
         chat = await bot.get_chat(CHANNEL_USERNAME)
         _CHANNEL_ID = chat.id
+        _DB_ID_BAD = False
+        try:
+            await db.set_setting(_GATE_ID_KEY, str(_CHANNEL_ID))
+        except Exception as e:
+            log.warning(f"🛡 resolve persist: {e}")
         log.info(f"🛡 Канал найден: «{getattr(chat, 'title', '?')}» (ID: {_CHANNEL_ID})")
         return _CHANNEL_ID
     except Exception as e:

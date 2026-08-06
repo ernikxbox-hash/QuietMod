@@ -377,9 +377,9 @@ async def on_my_chat_member(update: ChatMemberUpdated):
                 log.info(f"📌 Бот ограничен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id}) — оставлен в списке")
             else:
                 log.info(f"📌 Бот добавлен в {chat.type} «{chat.title or chat.full_name or chat.id}» (ID: {chat.id})")
-            # 🛡 Бота добавили именно в канал гейта — фиксируем ID сразу
+            # 🛡 Бота добавили именно в канал гейта — фиксируем ID сразу (и в БД)
             if is_gate_channel:
-                set_channel_id(chat.id)
+                await set_channel_id(chat.id)
                 log.info(f"🛡 Гейт: это канал @{CHANNEL_USERNAME} — ID зафиксирован, подписка заработала")
     elif new_status in ("left", "kicked"):
         await db.remove_bot_chat(chat.id)
