@@ -681,18 +681,19 @@ def kb_cmd() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def kb_admin() -> InlineKeyboardMarkup:
+    """Компактное меню админки: 2 колонки, короткие подписи."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◆ Дашборд",           callback_data="adm_dash")],
-        [InlineKeyboardButton(text="◆ Пользователи",       callback_data="adm_users")],
-        [InlineKeyboardButton(text="◆ Бизнес",             callback_data="adm_biz")],
-        [InlineKeyboardButton(text="◆ Статистика",         callback_data="adm_stats")],
-        [InlineKeyboardButton(text="◆ Последние перехваты", callback_data="adm_catches")],
-        [InlineKeyboardButton(text="✦ Предложения",        callback_data="adm_ideas")],
-        [InlineKeyboardButton(text="▤ Сообщение всем",     callback_data="adm_broadcast")],
-        [InlineKeyboardButton(text="▤ По группам/каналам", callback_data="adm_broadcast_groups")],
-        [InlineKeyboardButton(text="◆ Гейт подписки",     callback_data="adm_gate")],
-        [InlineKeyboardButton(text="◆ Проверка ключей",   callback_data="adm_keys")],
-        [InlineKeyboardButton(text="← В меню",             callback_data="back_menu")],
+        [InlineKeyboardButton(text="◆ Дашборд",     callback_data="adm_dash"),
+         InlineKeyboardButton(text="◆ Пользователи", callback_data="adm_users")],
+        [InlineKeyboardButton(text="◆ Бизнес",      callback_data="adm_biz"),
+         InlineKeyboardButton(text="◆ Статистика",   callback_data="adm_stats")],
+        [InlineKeyboardButton(text="◆ Перехваты",   callback_data="adm_catches"),
+         InlineKeyboardButton(text="✦ Предложения",  callback_data="adm_ideas")],
+        [InlineKeyboardButton(text="▤ Рассылка",    callback_data="adm_broadcast"),
+         InlineKeyboardButton(text="▤ Группы",      callback_data="adm_broadcast_groups")],
+        [InlineKeyboardButton(text="◆ Гейт",        callback_data="adm_gate"),
+         InlineKeyboardButton(text="◆ Ключи",       callback_data="adm_keys")],
+        [InlineKeyboardButton(text="← В меню",      callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (
     "Ты сдержанный, элегантный ИИ-консьерж внутри Telegram-бота Quiet Mod. "

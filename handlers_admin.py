@@ -61,7 +61,9 @@ async def cb_adm(call: CallbackQuery, state: FSMContext):
     await state.clear()
     await call.answer()
     await call.message.edit_text(
-        f"▲ <b>Admin Suite</b>\n{LINE}",
+        f"▲ <b>Admin Suite</b> · Quiet Mod 👁️\n"
+        f"<code>{LINE}</code>\n\n"
+        "◇ Выбери раздел:",
         reply_markup=kb_admin(),
     )
 
@@ -99,17 +101,17 @@ async def _render_dashboard() -> str:
     lines = [
         "◆ <b>ДАШБОРД</b> · Quiet Mod 👁️",
         f"<code>{LINE}</code>",
-        f"◇ Реальные:     <b>{real}</b>  (подписаны на канал)",
-        f"◇ В базе:        <b>{users}</b>  (+{users24} за 24ч)",
-        f"◇ Бизнес:        <b>{biz}</b>  подключений",
-        f"◇ Сообщений:     <b>{msgs}</b>  (+{msgs24} за 24ч)",
-        f"◇ Запуски:        сегодня <b>{l_today}</b> · 7д <b>{l_week}</b> · всего <b>{l_all}</b>",
-        f"✕ Удалённых:      <b>{del_all}</b>  (сегодня {del_today})",
-        f"✦ Изменённых:     <b>{ed_all}</b>  (сегодня {ed_today})",
-        f"◇ Расшифровок:   <b>{whisper}</b>",
-        f"⟡ Звёзд собрано:  <b>{stars}</b>",
-        f"✦ Предложений:    <b>{ideas}</b>",
-        f"▤ Бот в чатах:    <b>{chats}</b>",
+        f"◇ Пользователи   <b>{users}</b>  (+{users24} за 24ч)",
+        f"◇ Реальные       <b>{real}</b>  подписаны на канал",
+        f"◇ Бизнес         <b>{biz}</b>  подключений",
+        f"◇ Сообщений      <b>{msgs}</b>  (+{msgs24} за 24ч)",
+        f"◇ Запуски        сегодня <b>{l_today}</b> · 7д <b>{l_week}</b> · всего <b>{l_all}</b>",
+        f"<code>{LINE}</code>",
+        f"✕ Удалённых      <b>{del_all}</b>  (сегодня {del_today})",
+        f"✦ Изменённых     <b>{ed_all}</b>  (сегодня {ed_today})",
+        f"◇ Расшифровок    <b>{whisper}</b>",
+        f"⟡ Звёзд          <b>{stars}</b>  ·  ✦ Идей <b>{ideas}</b>",
+        f"▤ Бот в чатах    <b>{chats}</b>",
         f"<code>{LINE}</code>",
         "◆ <b>Запуски · 7 дней</b>",
     ]
@@ -144,7 +146,7 @@ async def cb_adm_gate(call: CallbackQuery):
     if not _is_admin(call):
         return
     await call.answer()
-    lines = [f"◆ <b>Гейт подписки</b>\n{LINE}"]
+    lines = [f"◆ <b>Гейт подписки</b>\n<code>{LINE}</code>"]
     if not CHANNEL_USERNAME.strip():
         lines.append("◇ Канал: <b>не задан</b> (CHANNEL_USERNAME) — гейт выключен")
     else:
@@ -204,17 +206,17 @@ async def cb_adm_keys(call: CallbackQuery):
     await call.answer()
     if not GROQ_API_KEYS:
         await call.message.edit_text(
-            f"◆ <b>Проверка API-ключей</b>\n{LINE}\n\nКлючи не настроены.",
+            f"◆ <b>Проверка API-ключей</b>\n<code>{LINE}</code>\n\nКлючи не настроены.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="← В меню", callback_data="adm")]
             ]),
         )
         return
     await call.message.edit_text(
-        f"◇ Проверяю {len(GROQ_API_KEYS)} ключ(а)…\n{LINE}\n◇ Живой запрос к Groq по каждому."
+        f"◇ Проверяю {len(GROQ_API_KEYS)} ключ(а)…\n<code>{LINE}</code>\n◇ Живой запрос к Groq по каждому."
     )
     results = await asyncio.gather(*[_probe_groq_key(k) for k in GROQ_API_KEYS])
-    lines = [f"◆ <b>Проверка API-ключей</b>\n{LINE}"]
+    lines = [f"◆ <b>Проверка API-ключей</b>\n<code>{LINE}</code>"]
     for i, (ok, err) in enumerate(results, start=1):
         if ok:
             lines.append(f"   Ключ {i}: <b>работает</b>")
@@ -246,11 +248,11 @@ async def cb_adm_catches(call: CallbackQuery):
     ])
     if not catches:
         await call.message.edit_text(
-            f"◆ <b>Последние перехваты</b>\n{LINE}\n\nПусто.",
+            f"◆ <b>Последние перехваты</b>\n<code>{LINE}</code>\n\nПусто.",
             reply_markup=back_kb,
         )
         return
-    lines = [f"◆ <b>Последние перехваты</b>\n{LINE}"]
+    lines = [f"◆ <b>Последние перехваты</b>\n<code>{LINE}</code>"]
     for c in catches:
         icon = "✕" if c["event_type"] == "deleted" else "✦"
         name = html_escape((c.get("from_name") or "?")[:24])
@@ -269,7 +271,7 @@ async def cb_adm_biz(call: CallbackQuery):
     await call.answer()
     total = await db.count_business_owners()
     owners = await db.get_business_owners(20)
-    lines = [f"◆ <b>Бизнес-подключения</b> · <b>{total}</b>\n{LINE}"]
+    lines = [f"◆ <b>Бизнес-подключения</b> · <b>{total}</b>\n<code>{LINE}</code>"]
     if not owners:
         lines.append("\nПусто — пока никто не подключал бота к бизнесу.\n\n"
                      "Как только кто-то подключит бота через «Подключение» —\n"
@@ -315,14 +317,14 @@ async def _render_users_page(page: int) -> tuple[str, InlineKeyboardMarkup]:
     offset = page * USERS_PAGE_SIZE
     users = await db.get_all_users(limit=USERS_PAGE_SIZE, offset=offset)
     if not users:
-        text = f"◆ <b>Пользователи</b>\n{LINE}\nВсего: <b>{total}</b>\n\nПусто."
+        text = f"◆ <b>Пользователи</b>\n<code>{LINE}</code>\nВсего: <b>{total}</b>\n\nПусто."
     else:
         lines = [_fmt_user_line(u) for u in users]
         page_count = (total + USERS_PAGE_SIZE - 1) // USERS_PAGE_SIZE
         text = (
-            f"◆ <b>Пользователи</b>  ({total})\n{LINE}\n\n"
+            f"◆ <b>Пользователи</b>  ({total})\n<code>{LINE}</code>\n\n"
             + "\n\n".join(lines)
-            + f"\n\n{LINE}\nСтраница {page + 1} / {max(page_count, 1)}"
+            + f"\n\n<code>{LINE}</code>\nСтраница {page + 1} / {max(page_count, 1)}"
         )
     nav = []
     if page > 0:
@@ -361,7 +363,7 @@ async def cb_adm_users_search(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.set_state(S.adm_search)
     await call.message.edit_text(
-        f"◆ <b>Поиск пользователя</b>\n{LINE}\n\n"
+        f"◆ <b>Поиск пользователя</b>\n<code>{LINE}</code>\n\n"
         "Пришли числовой ID или @username —\n"
         "покажу карточку (регистрация, рефералы, архив):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -394,14 +396,14 @@ async def on_adm_search(msg: Message, state: FSMContext):
                 uid = resolved.get("id")
     if uid is None:
         await msg.answer(
-            f"◆ <b>Поиск пользователя</b>\n{LINE}\n\n"
+            f"◆ <b>Поиск пользователя</b>\n<code>{LINE}</code>\n\n"
             f"◇ <code>{html_escape(query or '?')}</code> — не найден.\n"
             "◇ Попробуй числовой ID или точный @username.",
             reply_markup=back_kb,
         )
         return
     lines = [
-        f"◆ <b>ПОЛЬЗОВАТЕЛЬ</b> · <code>{uid}</code>\n{LINE}",
+        f"◆ <b>ПОЛЬЗОВАТЕЛЬ</b> · <code>{uid}</code>\n<code>{LINE}</code>",
         f"◇ Профиль: <a href=\"tg://user?id={uid}\">открыть в Telegram</a>",
     ]
     u = await db.get_user(uid)
@@ -482,21 +484,21 @@ async def _render_stats() -> tuple[str, InlineKeyboardMarkup]:
     if not key_lines:
         key_lines = ["   — ключи не настроены —"]
     text = (
-        f"◆ <b>Статистика бота</b>\n{LINE}\n"
-        f"◇ Запуски:  сегодня <b>{launches[0]}</b> · 7д <b>{launches[1]}</b> · "
+        f"◆ <b>СТАТИСТИКА</b> · Quiet Mod 👁️\n"
+        f"<code>{LINE}</code>\n"
+        f"◇ Запуски        сегодня <b>{launches[0]}</b> · 7д <b>{launches[1]}</b> · "
         f"30д <b>{launches[2]}</b> · всего <b>{launches[3]}</b>\n"
-        f"{LINE}\n"
-        f"◆ <b>Groq API</b> (успешных ответов: <b>{ok_total}</b>)\n"
+        f"<code>{LINE}</code>\n"
+        f"◆ Groq API · успешных <b>{ok_total}</b>\n"
         + "\n".join(key_lines)
-        + f"\n{LINE}\n"
-        f"✕ Перехвачено удалённых:   <b>{del_caught}</b>\n"
-        f"✦ Перехвачено изменённых:  <b>{ed_caught}</b>\n"
-        f"◇ Расшифровок голосовых:  <b>{whisper}</b>\n"
-        f"{LINE}\n"
-        f"◇ Пользователей:  <b>{users}</b>\n"
-        f"◇ Записей в БД:   <b>{msgs}</b>\n"
-        f"⟡ Собрано звёзд:  <b>{stars}</b>\n"
-        f"✦ Предложений:    <b>{ideas}</b>"
+        + f"\n<code>{LINE}</code>\n"
+        f"✕ Удалённых      <b>{del_caught}</b>\n"
+        f"✦ Изменённых     <b>{ed_caught}</b>\n"
+        f"◇ Расшифровок    <b>{whisper}</b>\n"
+        f"<code>{LINE}</code>\n"
+        f"◇ Пользователей  <b>{users}</b>\n"
+        f"◇ Записей в БД   <b>{msgs}</b>\n"
+        f"⟡ Звёзд          <b>{stars}</b>  ·  ✦ Идей <b>{ideas}</b>"
     )
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -537,7 +539,7 @@ async def cb_adm_ideas(call: CallbackQuery):
     ideas = await db.get_ideas(30)
     if not ideas:
         await call.message.edit_text(
-            f"✦ <b>Предложения от пользователей</b>\n{LINE}\n"
+            f"✦ <b>Предложения от пользователей</b>\n<code>{LINE}</code>\n"
             "Пока пусто — расскажи людям о кнопке.",
             reply_markup=kb_admin(),
         )
@@ -559,7 +561,7 @@ async def cb_adm_ideas(call: CallbackQuery):
     kb_rows.append([InlineKeyboardButton(text="✕ Очистить все", callback_data="adm_clear_ideas")])
     kb_rows.append([InlineKeyboardButton(text="← Назад", callback_data="adm")])
     await call.message.edit_text(
-        f"✦ <b>Предложения от пользователей</b>  ({len(ideas)} шт.)\n{LINE}\n\n"
+        f"✦ <b>Предложения от пользователей</b>  ({len(ideas)} шт.)\n<code>{LINE}</code>\n\n"
         + "\n\n".join(lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows),
     )
@@ -580,7 +582,7 @@ async def cb_adm_clear_ideas(call: CallbackQuery):
     await db.clear_ideas()
     await call.answer("✕ Все предложения очищены", show_alert=True)
     await call.message.edit_text(
-        f"✦ <b>Предложения от пользователей</b>\n{LINE}\n"
+        f"✦ <b>Предложения от пользователей</b>\n<code>{LINE}</code>\n"
         "Список очищен.",
         reply_markup=kb_admin(),
     )
@@ -592,7 +594,7 @@ async def cb_adm_broadcast(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.set_state(S.broadcast)
     await call.message.edit_text(
-        f"▤ <b>Сообщение всем пользователям</b>\n{LINE}\n\n"
+        f"▤ <b>Сообщение всем пользователям</b>\n<code>{LINE}</code>\n\n"
         "Отправь сообщение, которое получат <b>все</b>,\n"
         "кто хоть раз писал /start боту.\n\n"
         "Поддерживаются текст, фото, видео и другие медиа\n"
@@ -628,7 +630,7 @@ async def on_broadcast_input(msg: Message, state: FSMContext):
             except Exception:
                 pass
     await status.edit_text(
-        f"▤ <b>Рассылка завершена</b>\n{LINE}\n"
+        f"▤ <b>Рассылка завершена</b>\n<code>{LINE}</code>\n"
         f"◇ Доставлено: <b>{ok}</b>\n"
         f"✕ Не доставлено: <b>{fail}</b>",
         reply_markup=kb_admin(),
@@ -640,7 +642,7 @@ async def cb_suggest_idea(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.set_state(S.suggest_idea)
     await call.message.edit_text(
-        f"✦ <b>Предложить идею</b>\n{LINE}\n\n"
+        f"✦ <b>Предложить идею</b>\n<code>{LINE}</code>\n\n"
         "Расскажи, что бы ты хотел видеть в боте.\n"
         "Любая идея — полезная функция, улучшение\n"
         "интерфейса, новая команда — всё приветствуется.\n\n"
@@ -666,7 +668,7 @@ async def on_idea_input(msg: Message, state: FSMContext):
         text.strip()
     )
     await msg.answer(
-        f"✦ <b>Спасибо за идею!</b>\n{LINE}\n\n"
+        f"✦ <b>Спасибо за идею!</b>\n<code>{LINE}</code>\n\n"
         "Твоё предложение отправлено разработчику.\n"
         "Лучшие идеи попадают в следующие обновления.\n\n"
         "Ты помогаешь сделать Quiet Mod лучше.",
@@ -676,7 +678,7 @@ async def on_idea_input(msg: Message, state: FSMContext):
     try:
         await bot.send_message(
             ADMIN_ID,
-            f"✦ <b>Новая идея!</b>\n{LINE}\n"
+            f"✦ <b>Новая идея!</b>\n<code>{LINE}</code>\n"
             f"◇ {uname} (ID: {uid})\n\n"
             f"◇ {html_escape(text[:500])}",
         )
@@ -720,7 +722,7 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
     chats = await db.get_all_bot_chats()
     if not chats:
         await call.message.edit_text(
-            f"▤ <b>Рассылка по группам/каналам</b>\n{LINE}\n\n"
+            f"▤ <b>Рассылка по группам/каналам</b>\n<code>{LINE}</code>\n\n"
             "Бот пока не добавлен ни в одну группу или канал.\n\n"
             "Добавь бота в группу/канал и выдай права\n"
             "администратора — после этого чат появится в\n"
@@ -736,10 +738,10 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
         for c in chats
     )
     await call.message.edit_text(
-        f"▤ <b>Рассылка по группам/каналам</b>\n{LINE}\n\n"
+        f"▤ <b>Рассылка по группам/каналам</b>\n<code>{LINE}</code>\n\n"
         f"Бот админ в <b>{len(chats)}</b> чатах:\n"
         f"{chat_list}\n\n"
-        f"{LINE}\n"
+        f"<code>{LINE}</code>\n"
         "Отправь сообщение — оно будет скопировано\n"
         "во все чаты, где бот администратор.\n\n"
         "Поддерживаются текст, фото, видео и другие\n"
@@ -754,7 +756,7 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
 @dp.message(F.text.regexp(r"(?i)^\.cmd$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
 async def on_cmd(msg: Message):
     await msg.answer(
-        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n{LINE}\n\n"
+        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n<code>{LINE}</code>\n\n"
         "Выбери команду:",
         reply_markup=kb_cmd(),
     )
@@ -768,7 +770,7 @@ async def on_cmd_business(msg: Message):
     )
     await _business_send_message_ex(
         msg.business_connection_id, msg.chat.id,
-        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n{LINE}\n\n"
+        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n<code>{LINE}</code>\n\n"
         "Выбери команду:"
     )
 
@@ -781,7 +783,7 @@ async def cb_cmd_info(call: CallbackQuery):
         await call.answer("Функция не найдена", show_alert=True)
         return
     text = (
-        f"{feat['title']}\n{LINE}\n\n"
+        f"{feat['title']}\n<code>{LINE}</code>\n\n"
         f"{feat['desc']}\n\n"
         f"<b>Использование:</b>\n<code>{feat['usage']}</code>\n\n"
         f"<b>Пример:</b>\n<code>{feat['example']}</code>\n\n"
@@ -798,7 +800,7 @@ async def cb_cmd_info(call: CallbackQuery):
 async def cb_cmd_back(call: CallbackQuery):
     await call.answer()
     await call.message.edit_text(
-        f"◆ <b>QUIET MOD</b> 👁️ — список функций\n{LINE}\n\n"
+        f"◆ <b>QUIET MOD</b> 👁️ — список функций\n<code>{LINE}</code>\n\n"
         "Выбери интересующую функцию:",
         reply_markup=kb_cmd(),
     )
@@ -844,7 +846,7 @@ async def on_emoji_cmd(msg: Message):
         lines.append(f"{s.emoji or '❔'} → <code>{eid}</code>")
     text = (
         f"👁 <b>Пак {html_escape(sticker_set.name)}</b> · {len(sticker_set.stickers)} эмодзи\n"
-        f"{LINE}\n\n"
+        f"<code>{LINE}</code>\n\n"
         + "\n".join(lines)
     )
     if len(text) > 4000:
@@ -895,7 +897,7 @@ async def on_broadcast_groups_input(msg: Message, state: FSMContext):
     if removed:
         result_parts.append(f"◇ Устаревших чатов удалено: <b>{removed}</b>")
     await status.edit_text(
-        f"▤ <b>Рассылка по группам/каналам завершена</b>\n{LINE}\n" + "\n".join(result_parts),
+        f"▤ <b>Рассылка по группам/каналам завершена</b>\n<code>{LINE}</code>\n" + "\n".join(result_parts),
         reply_markup=kb_admin(),
     )
 
