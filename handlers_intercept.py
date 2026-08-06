@@ -85,6 +85,20 @@ async def on_business_msg(msg: Message):
             await asyncio.sleep(int(retry_after))
             await _business_send_message_ex(msg.business_connection_id, msg.chat.id, msg.text)
         log.info(f"🛡️ nomute resend conn={msg.business_connection_id} chat={msg.chat.id} owner={owner_id}")
+    # 🔇 .mute — удаляем ВСЁ от собеседника. Проверка раньше .wbl: mute
+    # означает «удалять всё», и не надо гонять регексы мата ради результата,
+    # который всё равно удаление.
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
+        and (msg.business_connection_id, msg.chat.id) in business_muted_chats
+    ):
+        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        return
     if (
         getattr(msg.chat, "type", None) == "private"
         and msg.from_user
@@ -97,17 +111,6 @@ async def on_business_msg(msg: Message):
             await asyncio.sleep(int(retry_after))
             await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         log.debug(f"🧹 wbl deleted msg={msg.message_id} owner={owner_id}")
-        return
-    if (
-        getattr(msg.chat, "type", None) == "private"
-        and msg.from_user
-        and msg.from_user.id != owner_id
-        and (msg.business_connection_id, msg.chat.id) in business_muted_chats
-    ):
-        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
-        if not ok and retry_after:
-            await asyncio.sleep(int(retry_after))
-            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
         return
     afk = business_afk.get(msg.business_connection_id) or user_afk.get(owner_id)
     if (

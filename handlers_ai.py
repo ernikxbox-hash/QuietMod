@@ -23,7 +23,7 @@ async def cb_ai_open(call: CallbackQuery, state: FSMContext):
     )
 
 THINKING_FRAMES = ["◜ 👁️ Думаю", "◝ 👁️ Думаю", "◞ 👁️ Думаю", "◟ 👁️ Думаю"]
-THINKING_INTERVAL = 0.4
+THINKING_INTERVAL = 0.8  # реже дёргаем editMessageText, пока ИИ думает
 
 async def _spin_thinking(chat_id: int, message_id: int):
     i = 0

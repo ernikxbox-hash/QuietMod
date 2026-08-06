@@ -47,15 +47,24 @@ from functions import (
 async def _business_spam_worker(conn_id: str, chat_id: int, owner_id: int, text: str, count: int):
     key = (conn_id, chat_id, owner_id)
     try:
+        # Без искусственной паузы между сообщениями: скорость режет только сам
+        # Telegram (флуд-лимит → retry_after). Пауза 50мс на каждое сообщение
+        # только удлиняла рассылку. После 5 подряд не-флуд ошибок останавливаемся:
+        # чат закрыт/недоступен — долбить дальше бессмысленно.
+        fail_streak = 0
         for _ in range(count):
             ok, retry_after, _ = await _business_send_message_ex(conn_id, chat_id, text)
             if not ok:
                 if retry_after:
-                    await asyncio.sleep(int(retry_after))
+                    fail_streak = 0
+                    await asyncio.sleep(max(1, int(retry_after)))  # никогда не спим 0
                     continue
+                fail_streak += 1
+                if fail_streak >= 5:
+                    break
                 await asyncio.sleep(1)
                 continue
-            await asyncio.sleep(0.05)
+            fail_streak = 0
     except asyncio.CancelledError:
         pass
     except Exception as e:
@@ -1380,13 +1389,24 @@ async def on_format_group(msg: Message):
 async def _spam_worker(chat_id: int, uid: int, text: str, count: int):
     key = (chat_id, uid)
     try:
+        # Без паузы между сообщениями: Telegram сам скажет retry_after при
+        # флуд-лимите. Раньше после ПЕРВОГО 429 повторный sendMessage тоже
+        # ловил 429 и ронял весь воркер, не досылая остаток. Теперь после
+        # каждого 429 просто ждём указанное время и продолжаем. После 5
+        # подряд не-флуд ошибок останавливаемся (чат закрыт/бот в бане).
+        fail_streak = 0
         for _ in range(count):
             try:
                 await bot.send_message(chat_id, text, parse_mode=None)
+                fail_streak = 0
             except TelegramRetryAfter as e:
+                fail_streak = 0
                 await asyncio.sleep(e.retry_after)
-                await bot.send_message(chat_id, text, parse_mode=None)
-            await asyncio.sleep(0.05)
+            except Exception:
+                fail_streak += 1
+                if fail_streak >= 5:
+                    break
+                await asyncio.sleep(1)
     except asyncio.CancelledError:
         pass
     except Exception as e:

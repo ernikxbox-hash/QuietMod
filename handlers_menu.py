@@ -176,11 +176,9 @@ async def cb_del_saved(call: CallbackQuery):
 
 @dp.callback_query(F.data == "clearsaved")
 async def cb_clear_saved(call: CallbackQuery):
-    uid   = call.from_user.id
-    items = await db.get_saved_messages(uid)
-    for item in items:
-        await db.delete_saved_message(item["id"])
-    await call.answer("✕ Все удалены", show_alert=True)
+    uid = call.from_user.id
+    n   = await db.clear_saved_messages(uid)
+    await call.answer(f"✕ Удалено: {n}", show_alert=True)
     await call.message.edit_text(
         home_text(),
         reply_markup=kb_main(uid),

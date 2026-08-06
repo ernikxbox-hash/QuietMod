@@ -576,18 +576,30 @@ async def on_broadcast_groups_input(msg: Message, state: FSMContext):
     )
 
 
+# Кэш регистрации чатов/юзеров: в группах/каналах сообщения идут потоком,
+# и писать add_bot_chat + upsert_user в БД на КАЖДОЕ сообщение — лишние
+# транзакции с commit на горячем пути. Пишем только когда данные изменились.
+_KNOWN_CHATS: dict[int, tuple[str, str]] = {}  # chat_id -> (title, chat_type)
+_KNOWN_USERS: dict[int, tuple[str, str]] = {}  # user_id -> (username, full_name)
+
+
 @dp.message(F.chat.type.in_({"group", "supergroup", "channel"}))
 @dp.channel_post()
 async def on_group_msg(msg: Message):
     """Сохраняет чат в БД при любом сообщении в группе/канале."""
     if msg.chat.type in ("group", "supergroup", "channel"):
-        await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
+        title = msg.chat.title or ""
+        if _KNOWN_CHATS.get(msg.chat.id) != (title, msg.chat.type):
+            await db.add_bot_chat(msg.chat.id, title, msg.chat.type)
+            _KNOWN_CHATS[msg.chat.id] = (title, msg.chat.type)
         if msg.from_user:
-            await db.upsert_user(
-                msg.from_user.id,
-                msg.from_user.username or "",
-                msg.from_user.full_name or "",
-            )
+            if len(_KNOWN_USERS) > 50_000:
+                _KNOWN_USERS.clear()  # предохранитель памяти для очень больших групп
+            uname = msg.from_user.username or ""
+            fname = msg.from_user.full_name or ""
+            if _KNOWN_USERS.get(msg.from_user.id) != (uname, fname):
+                await db.upsert_user(msg.from_user.id, uname, fname)
+                _KNOWN_USERS[msg.from_user.id] = (uname, fname)
             _knb_cache_member(msg.chat.id, msg.from_user)
     if msg.voice or msg.video_note:
         media_label = "голосового" if msg.voice else "кружка"

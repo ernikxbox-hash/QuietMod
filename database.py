@@ -491,6 +491,15 @@ async def delete_saved_message(save_id: int):
     async with _write_lock:
         await conn.execute("DELETE FROM saved_messages WHERE id=?", (save_id,))
         await conn.commit()
+async def clear_saved_messages(owner_id: int) -> int:
+    """Разом удаляет все сохранённые перехваты владельца (одна транзакция)."""
+    conn = _get_conn()
+    async with _write_lock:
+        cur = await conn.execute(
+            "DELETE FROM saved_messages WHERE owner_id=?", (owner_id,)
+        )
+        await conn.commit()
+        return cur.rowcount
 async def add_bot_chat(chat_id: int, title: str, chat_type: str):
     conn = _get_conn()
     now = datetime.now().isoformat()
