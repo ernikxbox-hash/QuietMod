@@ -14,6 +14,7 @@ import handlers_ramka      # .ramka (золотая рамка на фото)
 import handlers_stik       # 🏷 .stik (фото → стикер)
 import handlers_krom       # 🎥 .krom (видео → кружок)
 import handlers_voice       # 🎙 .voice (текст → голосовое)
+import handlers_wm         # 🏷 .wm (водяной знак на фото)
 import handlers_intercept  # перехват удалённых/изменённых + голосовые (catch-all)
 import handlers_ai         # ИИ-консьерж в ЛС и поиск по архиву
 import handlers_menu       # ЛС-меню: сохранённые, howto, профиль, архив, донаты

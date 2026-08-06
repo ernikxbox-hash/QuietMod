@@ -68,6 +68,7 @@ class S(StatesGroup):
     ramka = State()
     stik = State()
     krom = State()
+    wm = State()  # 🏷 .wm (водяной знак на фото)
 
 _http_session: Optional[aiohttp.ClientSession] = None
 
