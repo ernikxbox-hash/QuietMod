@@ -576,6 +576,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": "ответь на фото → .ramka",
         "note": "В ЛС с ботом: .ramka → пришли фото. В чатах: ответь на фото + .ramka"
     },
+    "stik": {
+        "title": "🏷 .stik",
+        "desc": "Стикер из фото — ответь на фото и напиши .stik, и фото станет стикером.",
+        "usage": ".stik (ответь на фото)",
+        "example": "ответь на фото → .stik",
+        "note": "В ЛС с ботом: .stik → пришли фото. В чатах: ответь на фото + .stik"
+    },
     "bold": {
         "title": "◆ .bold",
         "desc": "Жирный шрифт — выдели текст жирным.",
@@ -635,7 +642,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "ramka", "stik",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled"]
     rows = []
     for i in range(0, len(cmd_keys), 2):

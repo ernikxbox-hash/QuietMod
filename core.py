@@ -65,6 +65,7 @@ class S(StatesGroup):
     broadcast = State()
     broadcast_groups = State()
     ramka = State()
+    stik = State()
 
 _http_session: Optional[aiohttp.ClientSession] = None
 
