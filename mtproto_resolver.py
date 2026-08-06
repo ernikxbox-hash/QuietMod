@@ -100,3 +100,46 @@ async def resolve_username_mtproto(username: str) -> Optional[dict]:
     except Exception as e:
         log.warning(f"🛰 mtproto resolve '@{s}': {e}")
         return None
+
+
+async def get_chat_participants_mtproto(chat_id) -> Optional[list[dict]]:
+    """Полный список участников группы/канала через MTProto. None — не вышло.
+
+    Bot API не умеет перечислять участников группы (только админов и счётчик),
+    а MTProto умеет: channels.GetParticipantsRequest. Используется как
+    дополнительный источник пула участников для .who и будущих соц-фич.
+    Работает для супергрупп/каналов, где клиент (сессия владельца или бот)
+    участник. Любая ошибка → None, бот не падает.
+    """
+    if not mtproto_enabled():
+        return None
+    try:
+        client = await _get_client()
+        if client is None:
+            return None
+        from telethon.tl.functions.channels import GetParticipantsRequest
+        from telethon.tl.types import ChannelParticipantsSearch
+        entity = await client.get_entity(int(chat_id))
+        participants = await client(GetParticipantsRequest(
+            channel=entity,
+            filter=ChannelParticipantsSearch(""),
+            offset=0,
+            limit=200,
+            hash=0,
+        ))
+        out = []
+        for p in getattr(participants, "users", []) or []:
+            eid = getattr(p, "id", None)
+            if not eid or getattr(p, "bot", False):
+                continue
+            first = getattr(p, "first_name", "") or ""
+            last = getattr(p, "last_name", "") or ""
+            out.append({
+                "id": int(eid),
+                "username": (getattr(p, "username", "") or "").lstrip("@"),
+                "full_name": (f"{first} {last}").strip() or "",
+            })
+        return out
+    except Exception as e:
+        log.debug(f"🛰 mtproto participants: {e}")
+        return None

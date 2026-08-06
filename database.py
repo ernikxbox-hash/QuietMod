@@ -884,6 +884,16 @@ async def get_chat_top(chat_id: int, limit: int = 10) -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def get_chat_level_users(chat_id: int) -> list[dict]:
+    """Все, у кого есть XP в чате (для .who: пул участников из БД)."""
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT user_id, name, username FROM chat_levels WHERE chat_id=?",
+        (chat_id,),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
 async def get_chat_level_by_username(chat_id: int, username: str) -> Optional[dict]:
     """Уровень по @username в конкретном чате (для .level @user)."""
     conn = _get_conn()

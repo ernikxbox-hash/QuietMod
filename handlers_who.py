@@ -1,13 +1,16 @@
 """🎯 .who — «Кто вероятнее…»: рандомный участник чата на вопрос.
 
 Механика:
-- .who кто самый добрый — бот выбирает случайного участника из кэша
-  участников чата (тот же кэш, что у .knb: пополняется при каждом
-  сообщении в группе и бизнес-группе).
+- .who кто самый добрый — бот выбирает случайного участника чата.
+- Пул участников собирается из ЧЕТЫРЁХ источников (чем больше, тем
+  честнее рандом): кэш сообщений (.knb), уровни из БД, админы чата
+  через Bot API и полный список участников через MTProto (если настроен
+  TELEGRAM_API_ID/HASH). Автор команды НЕ исключается — все равны.
 - Работает в обычных группах (бот в чате) и бизнес-группах.
 - Вопрос необязателен: .who без текста покажет подсказку.
-- Без внешних API — чистый рандом, ломаться нечему.
+- Любой сбой источника молча пропускается — бот не падает.
 """
+import asyncio
 import random
 import re
 from typing import Optional
@@ -16,10 +19,12 @@ from aiogram import F
 from aiogram.types import Message
 from html import escape as html_escape
 
+import database as db
 from business_api import _business_edit_message, _get_owner_id_cached
-from core import dp
+from core import bot, dp
 from functions import LINE
 from handlers_games import get_group_members
+from mtproto_resolver import get_chat_participants_mtproto
 
 
 def _who_title(raw: str) -> str:
@@ -36,14 +41,58 @@ def _who_name(m: dict) -> str:
     return html_escape(m.get("full_name") or "Участник")
 
 
-def _who_pick(chat_id: int, exclude_uid: Optional[int]) -> Optional[dict]:
-    """Случайный участник из кэша чата (автора не выбираем, если есть кто-то ещё)."""
-    members = [m for m in get_group_members(chat_id) if m.get("id")]
-    if exclude_uid:
-        others = [m for m in members if m["id"] != exclude_uid]
-        if others:
-            members = others
-    return random.choice(members) if members else None
+async def _who_pool(chat_id: int) -> list[dict]:
+    """Объединяем всех, кого знаем в чате, из четырёх источников.
+
+    Bot API не умеет получать полный список участников группы, поэтому пул
+    собирается из: кэш сообщений + уровни из БД + админы (Bot API) +
+    полный список участников (MTProto, если настроен). Автор команды НЕ
+    исключается: рандом честный, все равны.
+    """
+    # Кэш сообщений — мгновенный, кладём сразу; медленные источники (БД,
+    # Bot API, MTProto) запускаем ПАРАЛЛЕЛЬНО через gather — чтобы .who
+    # отвечал быстро, а не ждал каждый источник по очереди (~1-2 сек).
+    pool: dict[int, dict] = {}
+    for m in get_group_members(chat_id):
+        if m.get("id"):
+            pool[m["id"]] = m
+
+    async def _db_levels():
+        try:
+            return await db.get_chat_level_users(chat_id)
+        except Exception:
+            return []
+
+    async def _admins():
+        try:
+            return await bot.get_chat_administrators(chat_id)
+        except Exception:
+            return []
+
+    async def _mtproto():
+        try:
+            return (await get_chat_participants_mtproto(chat_id)) or []
+        except Exception:
+            return []
+
+    levels, admins, mtproto = await asyncio.gather(_db_levels(), _admins(), _mtproto())
+    for r in levels:
+        pool[r["user_id"]] = {
+            "id": r["user_id"],
+            "username": (r.get("username") or "").lstrip("@"),
+            "full_name": r.get("name") or "",
+        }
+    for cm in admins:
+        u = getattr(cm, "user", None)
+        if u and not getattr(u, "is_bot", False):
+            pool[u.id] = {"id": u.id, "username": u.username or "", "full_name": u.full_name or ""}
+    for m in mtproto:
+        pool[m["id"]] = m
+    return list(pool.values())
+
+
+def _who_pick(pool: list[dict]) -> Optional[dict]:
+    return random.choice(pool) if pool else None
 
 
 def _who_result(title: str, pick: dict, total: int) -> str:
@@ -62,7 +111,7 @@ _WHO_HINT = (
     "◇ Или: <code>.who кто вероятнее купит пиццу</code>\n\n"
     f"<code>{LINE}</code>\n"
     "◇ Бот выберет случайного участника чата.\n"
-    "◇ Чем активнее чат — тем больше имён в пуле."
+    "◇ В пуле: кто писал в чате, админы и все с уровнем."
 )
 
 
@@ -75,9 +124,10 @@ async def on_who_group(msg: Message):
     if not raw:
         await msg.reply(_WHO_HINT)
         return
+    pool = await _who_pool(msg.chat.id)
     title = _who_title(raw)
-    total = len(get_group_members(msg.chat.id))
-    pick = _who_pick(msg.chat.id, msg.from_user.id)
+    total = len(pool)
+    pick = _who_pick(pool)
     if pick is None:
         await msg.reply(
             f"◆ <b>{html_escape(title.upper())}</b>\n"
@@ -104,9 +154,10 @@ async def on_who_business(msg: Message):
     if not raw:
         text = _WHO_HINT
     else:
+        pool = await _who_pool(msg.chat.id)
         title = _who_title(raw)
-        total = len(get_group_members(msg.chat.id))
-        pick = _who_pick(msg.chat.id, msg.from_user.id if msg.from_user else None)
+        total = len(pool)
+        pick = _who_pick(pool)
         if pick is None:
             text = (
                 f"◆ <b>{html_escape(title.upper())}</b>\n"
