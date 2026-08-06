@@ -192,6 +192,22 @@ async def init_db():
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS chat_levels (
+        chat_id    INTEGER NOT NULL,
+        user_id    INTEGER NOT NULL,
+        xp         INTEGER NOT NULL DEFAULT 0,
+        name       TEXT,
+        username   TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (chat_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_levels_chat ON chat_levels(chat_id, xp DESC);
+
+    CREATE TABLE IF NOT EXISTS chat_level_settings (
+        chat_id INTEGER PRIMARY KEY,
+        enabled INTEGER NOT NULL DEFAULT 1
+    );
     """)
     await _conn.commit()
     try:
@@ -823,6 +839,97 @@ async def purge_old_sled_events(days: int = 30) -> int:
         )
         await conn.commit()
         return cur.rowcount
+
+
+# ─── .level: XP и уровни за активность в чатах ────────────────────────
+async def add_chat_xp(chat_id: int, user_id: int, amount: int, name: str, username: str) -> int:
+    """Начисляет XP пользователю в чате. Возвращает новое суммарное XP."""
+    conn = _get_conn()
+    now = datetime.now().isoformat()
+    async with _write_lock:
+        await conn.execute("""
+            INSERT INTO chat_levels (chat_id, user_id, xp, name, username, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(chat_id, user_id) DO UPDATE SET
+                xp         = chat_levels.xp + excluded.xp,
+                name       = excluded.name,
+                username   = excluded.username,
+                updated_at = excluded.updated_at
+        """, (chat_id, user_id, amount, name, username, now))
+        await conn.commit()
+        async with conn.execute(
+            "SELECT xp FROM chat_levels WHERE chat_id=? AND user_id=?",
+            (chat_id, user_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return row[0] if row else amount
+
+
+async def get_chat_level(chat_id: int, user_id: int) -> Optional[dict]:
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT * FROM chat_levels WHERE chat_id=? AND user_id=?",
+        (chat_id, user_id),
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_chat_top(chat_id: int, limit: int = 10) -> list[dict]:
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT * FROM chat_levels WHERE chat_id=? ORDER BY xp DESC LIMIT ?",
+        (chat_id, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_chat_level_by_username(chat_id: int, username: str) -> Optional[dict]:
+    """Уровень по @username в конкретном чате (для .level @user)."""
+    conn = _get_conn()
+    uname = (username or "").lstrip("@").strip().lower()
+    async with conn.execute(
+        "SELECT * FROM chat_levels WHERE chat_id=? AND LOWER(username)=? LIMIT 1",
+        (chat_id, uname),
+    ) as cur:
+        row = await cur.fetchone()
+        return dict(row) if row else None
+
+
+async def get_chat_rank(chat_id: int, user_id: int) -> int:
+    """Место пользователя в топе чата (1 = самый активный)."""
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT xp FROM chat_levels WHERE chat_id=? AND user_id=?",
+        (chat_id, user_id),
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        return 0
+    async with conn.execute(
+        "SELECT COUNT(*) FROM chat_levels WHERE chat_id=? AND xp > ?",
+        (chat_id, row[0]),
+    ) as cur:
+        return (await cur.fetchone())[0] + 1
+
+
+async def is_level_enabled(chat_id: int) -> bool:
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT enabled FROM chat_level_settings WHERE chat_id=?", (chat_id,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row[0] == 1 if row else True  # по умолчанию уровни включены
+
+
+async def set_level_enabled(chat_id: int, enabled: bool):
+    conn = _get_conn()
+    async with _write_lock:
+        await conn.execute("""
+            INSERT INTO chat_level_settings (chat_id, enabled) VALUES (?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET enabled=excluded.enabled
+        """, (chat_id, 1 if enabled else 0))
+        await conn.commit()
 
 
 

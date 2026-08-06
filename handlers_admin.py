@@ -47,6 +47,7 @@ from handlers_intercept import (
     _tsc_kb,
     _tsc_teaser,
 )
+from handlers_level import award_chat_xp
 
 
 def _is_admin(call: CallbackQuery) -> bool:
@@ -912,7 +913,12 @@ _KNOWN_USERS: dict[int, tuple[str, str]] = {}  # user_id -> (username, full_name
 @dp.message(F.chat.type.in_({"group", "supergroup", "channel"}))
 @dp.channel_post()
 async def on_group_msg(msg: Message):
-    """Сохраняет чат в БД при любом сообщении в группе/канале."""
+    """Сохраняет чат в БД при любом сообщении в группе/канале + начисляет XP."""
+    if msg.chat.type in ("group", "supergroup") and msg.from_user and not msg.from_user.is_bot:
+        try:
+            await award_chat_xp(msg.chat.id, msg.from_user, msg)
+        except Exception as e:
+            log.warning(f"level xp: {e}")
     if msg.chat.type in ("group", "supergroup", "channel"):
         title = msg.chat.title or ""
         if _KNOWN_CHATS.get(msg.chat.id) != (title, msg.chat.type):

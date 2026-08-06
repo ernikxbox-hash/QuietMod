@@ -39,6 +39,7 @@ from functions import (
     user_afk,
 )
 from handlers_games import _knb_cache_member
+from handlers_level import award_chat_xp
 
 
 def _extract_media(msg: Message) -> tuple[str, Optional[str]]:
@@ -62,6 +63,11 @@ async def on_business_msg(msg: Message):
         return
     if msg.from_user and getattr(msg.chat, "type", None) in ("group", "supergroup"):
         _knb_cache_member(msg.chat.id, msg.from_user)
+        if not msg.from_user.is_bot:
+            try:
+                await award_chat_xp(msg.chat.id, msg.from_user, msg, conn_id=msg.business_connection_id)
+            except Exception as e:
+                log.warning(f"level xp: {e}")
     if (
         msg.text
         and msg.from_user
