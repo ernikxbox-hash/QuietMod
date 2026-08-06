@@ -55,7 +55,7 @@ def _extract_media(msg: Message) -> tuple[str, Optional[str]]:
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".ramka", ".stik", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".ramka", ".stik", ".krom", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
