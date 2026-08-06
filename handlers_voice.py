@@ -5,16 +5,20 @@
 2. Бизнес-чат: .voice текст → голосовое в чат.
 3. Группа/канал: .voice текст → голосовое в чат.
 
+Голос выбирается префиксом: .voice м: текст — Дмитрий (мужской),
+.voice ж: текст — Светлана (женский, по умолчанию).
+
 Как это работает: текст синтезируется нейроголосом Microsoft Edge (edge-tts —
-бесплатно, без API-ключей; голос ru-RU-SvetlanaNeural), MP3 пережимается в
-нативный OGG/Opus через ffmpeg (imageio-ffmpeg, статический бинарник внутри
-pip-пакета — ничего ставить на сервер не нужно). Так Telegram принимает файл
-как настоящее голосовое сообщение. Если Opus недоступен — отправляем MP3
-(Telegram пережмёт сам). Длинный текст обрезается до ~60 секунд озвучки —
-лимит голосовых.
+бесплатно, без API-ключей; голоса ru-RU-SvetlanaNeural / ru-RU-DmitryNeural),
+MP3 пережимается в нативный OGG/Opus через ffmpeg (imageio-ffmpeg, статический
+бинарник внутри pip-пакета — ничего ставить на сервер не нужно). Так Telegram
+принимает файл как настоящее голосовое сообщение. Если Opus недоступен —
+отправляем MP3 (Telegram пережмёт сам). Длинный текст обрезается до ~60 секунд
+озвучки — лимит голосовых.
 """
 import asyncio
 import os
+import re
 import subprocess
 import tempfile
 from io import BytesIO
@@ -35,14 +39,15 @@ from business_api import (
 from core import BOT_USERNAME, bot, dp, log
 
 # ── Параметры озвучки ─────────────────────────────────────────────────
-_VOICE_NAME = "ru-RU-SvetlanaNeural"   # нейроголос: Светлана (женский, Microsoft Edge)
-_VOICE_MAX_CHARS = 800                 # ~60 секунд озвучки (лимит голосовых)
+_VOICE_FEMALE = "ru-RU-SvetlanaNeural"   # Светлана — женский (Microsoft Edge)
+_VOICE_MALE = "ru-RU-DmitryNeural"       # Дмитрий — мужской (Microsoft Edge)
+_VOICE_MAX_CHARS = 800                   # ~60 секунд озвучки (лимит голосовых)
 
 
-def _voice_tts_sync(text: str) -> bytes:
-    """Синхронно (в потоке): текст → MP3-байты через edge-tts."""
+def _voice_tts_sync(text: str, voice: str) -> bytes:
+    """Синхронно (в потоке): текст → MP3-байты через edge-tts (указанный голос)."""
     async def _run() -> bytes:
-        communicate = edge_tts.Communicate(text, _VOICE_NAME)
+        communicate = edge_tts.Communicate(text, voice)
         buf = BytesIO()
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
@@ -85,10 +90,10 @@ def _voice_ogg_sync(mp3: bytes) -> Optional[bytes]:
         return None
 
 
-async def _voice_render(text: str) -> tuple[Optional[bytes], str]:
+async def _voice_render(text: str, voice: str) -> tuple[Optional[bytes], str]:
     """Текст → (аудио-байты, имя файла). Тяжёлая работа в фоновом потоке."""
     try:
-        mp3 = await asyncio.to_thread(_voice_tts_sync, text)
+        mp3 = await asyncio.to_thread(_voice_tts_sync, text, voice)
     except Exception as e:
         log.error(f"voice tts: {e}")
         return None, ""
@@ -98,10 +103,10 @@ async def _voice_render(text: str) -> tuple[Optional[bytes], str]:
     return mp3, "voice.mp3"
 
 
-async def _voice_run(text: str, chat_id: int,
+async def _voice_run(text: str, voice: str, chat_id: int,
                      business_connection_id: Optional[str] = None) -> bool:
-    """Озвучивает текст и отправляет голосовое в чат. True — успех."""
-    data, filename = await _voice_render(text)
+    """Озвучивает текст выбранным голосом и отправляет голосовое в чат. True — успех."""
+    data, filename = await _voice_render(text, voice)
     if not data:
         return False
     try:
@@ -125,31 +130,44 @@ async def _voice_cleanup(thinking: Optional[Message]) -> None:
         pass
 
 
-async def _voice_status(text: str, chat_id: int, send_fn,
+async def _voice_status(text: str, voice: str, chat_id: int, send_fn,
                         business_connection_id: Optional[str] = None) -> bool:
-    """Статус-сообщение → озвучка → уборка. False при ошибке (с ответом)."""
+    """Статус-сообщение → озвучка выбранным голосом → уборка. False при ошибке."""
     thinking = await send_fn("🎙 Озвучиваю…")
-    ok = await _voice_run(text, chat_id, business_connection_id=business_connection_id)
+    ok = await _voice_run(text, voice, chat_id, business_connection_id=business_connection_id)
     await _voice_cleanup(thinking)
     if not ok:
         await send_fn("😔 Не получилось озвучить — попробуй ещё раз.")
     return ok
 
 
-def _voice_body(msg: Message) -> str:
-    """Текст после .voice (с обрезкой до лимита голосовых)."""
+def _voice_body(msg: Message) -> tuple[str, str]:
+    """(голос, текст) после .voice. Формат: .voice [м:|ж:] текст — по умолчанию женский."""
     raw = (msg.text or msg.caption or "").strip()
     body = raw[6:].strip() if len(raw) >= 6 else ""
     if not body:
-        return ""
+        return _VOICE_FEMALE, ""
+    voice = _VOICE_FEMALE
+    m = re.match(r"^(м|ж)\s*[:：]\s*(.*)$", body, re.IGNORECASE | re.DOTALL)
+    if m:
+        if m.group(1).lower() == "м":
+            voice = _VOICE_MALE
+        body = m.group(2).strip()
+        if not body:
+            return _VOICE_FEMALE, ""   # .voice м: / ж: без текста → подсказка
+    elif re.match(r"^(м|ж)\s*$", body, re.IGNORECASE):
+        return _VOICE_FEMALE, ""       # .voice м / ж без двоеточия → подсказка
     if len(body) > _VOICE_MAX_CHARS:
         body = body[:_VOICE_MAX_CHARS].rstrip() + "…"
-    return body
+    return voice, body
 
 
 _VOICE_HINT = (
     f"🎙 <b>.voice</b> — напиши <code>.voice текст</code>,\n"
     f"◇ я озвучу его голосовым сообщением (ИИ-голос).\n\n"
+    f"◇ <b>Голос:</b>\n"
+    f"   <code>.voice м: текст</code> — Дмитрий (мужской)\n"
+    f"   <code>.voice ж: текст</code> — Светлана (женский, по умолчанию)\n\n"
     f"◇ Пример: <code>.voice привет, как дела?</code>\n"
     f"◇ Лимит: до {_VOICE_MAX_CHARS} символов (~60 сек)\n\n"
     f"— 👁️ @{BOT_USERNAME}"
@@ -161,11 +179,11 @@ _VOICE_HINT = (
 async def on_voice_dm(msg: Message):
     if not msg.from_user:
         return
-    text = _voice_body(msg)
+    voice, text = _voice_body(msg)
     if not text:
         await msg.answer(_VOICE_HINT)
         return
-    await _voice_status(text, msg.chat.id, msg.answer)
+    await _voice_status(text, voice, msg.chat.id, msg.answer)
 
 
 # ── Бизнес-чат: .voice текст ──────────────────────────────────────────
@@ -179,14 +197,14 @@ async def on_voice_business(msg: Message):
         return
     if not msg.from_user or msg.from_user.id != owner_id:
         return
-    text = _voice_body(msg)
+    voice, text = _voice_body(msg)
     if not text:
         await _business_edit_message(conn_id, msg.chat.id, msg.message_id, _VOICE_HINT)
         return
     ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "🎙 Озвучиваю…")
     if not ok:
         return
-    if await _voice_run(text, msg.chat.id, business_connection_id=conn_id):
+    if await _voice_run(text, voice, msg.chat.id, business_connection_id=conn_id):
         try:
             await _business_delete_message_ex(conn_id, msg.message_id)
         except Exception:
@@ -206,8 +224,8 @@ async def on_voice_group(msg: Message):
         return
     await db.upsert_user(msg.from_user.id, msg.from_user.username or "", msg.from_user.full_name or "")
     await db.add_bot_chat(msg.chat.id, msg.chat.title or "", msg.chat.type)
-    text = _voice_body(msg)
+    voice, text = _voice_body(msg)
     if not text:
         await msg.reply(_VOICE_HINT)
         return
-    await _voice_status(text, msg.chat.id, msg.reply)
+    await _voice_status(text, voice, msg.chat.id, msg.reply)
