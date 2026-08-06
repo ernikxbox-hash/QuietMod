@@ -68,6 +68,11 @@ def _knb_cache_member(chat_id: int, user) -> None:
     }
 
 
+def get_group_members(chat_id: int) -> list[dict]:
+    """Список участников чата из кэша (для .who и других социальных фич)."""
+    return list(_GROUP_MEMBERS.get(chat_id, {}).values())
+
+
 def _knb_display_name(name: str, username: str) -> str:
     if username:
         return f"@{username}"

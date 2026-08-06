@@ -11,6 +11,7 @@ import handlers_commands   # .spam .mute .nomute .afk .code .wbl .ai .price .cur
 import handlers_sled       # 🛰 .sled .unsled .infosled — отслеживание профиля
 import handlers_games      # .knb (Камень·Ножницы·Бумага)
 import handlers_level      # ⬆ .level .level top .unlevel — XP и уровни за активность
+import handlers_who        # 🎯 .who — «Кто вероятнее»: рандомный участник чата
 import handlers_ramka      # .ramka (золотая рамка на фото)
 import handlers_stik       # 🏷 .stik (фото → стикер)
 import handlers_krom       # 🎥 .krom (видео → кружок)
