@@ -514,7 +514,7 @@ CMD_FEATURES: dict[str, dict] = {
         "note": "Только для личных чатов (Business)"
     },
     "nomute": {
-        "title": "🛡 .nomute",
+        "title": "◇ .nomute",
         "desc": "Дублирует твои сообщения от имени бота — если собеседник удаляет их, копия останется.",
         "usage": ".nomute — включить",
         "example": ".unnomute — выключить",
@@ -549,21 +549,21 @@ CMD_FEATURES: dict[str, dict] = {
         "note": "В бизнес-чате без аргумента — оценит собеседника"
     },
     "info": {
-        "title": "ℹ️ .info",
+        "title": "◇ .info",
         "desc": "Карточка собеседника: имя, username, ID, bio, Premium, настройки приватности, фото профиля и примерная дата регистрации в Telegram.",
         "usage": ".info · .info @username · .info id",
         "example": ".info · .info @friend",
         "note": "В ЛС с ботом: .info @username — пришлёт и фото профиля · в бизнес-чате без аргумента — собеседник · в группе — ответь на сообщение или укажи @username"
     },
     "curs": {
-        "title": "💱 .curs",
+        "title": "◇ .curs",
         "desc": "Курс популярных валют к рублю — официальные курсы ЦБ РФ, одним сообщением.",
         "usage": ".curs",
         "example": ".curs",
         "note": "Точный источник: ЦБ РФ · работает в ЛС (Business), группах, каналах и в ЛС с ботом"
     },
     "knb": {
-        "title": "⚔️ .knb",
+        "title": "◇ .knb",
         "desc": "Камень-ножницы-бумага: 1×1 в ЛС и в группах по вызову.",
         "usage": ".knb — ЛС · .knb @user — группа",
         "example": ".knb @friend",
@@ -661,7 +661,7 @@ CMD_FEATURES: dict[str, dict] = {
         "note": "Работает в группах и личных чатах (Business)"
     },
     "sled": {
-        "title": "🛰 .sled",
+        "title": "◇ .sled",
         "desc": "Следи за изменениями профиля — имя, юзернейм, bio, аватарка. Макс 3 цели на пользователя.",
         "usage": ".sled @username · .sled (список) · .unsled @username · .infosled @username",
         "example": ".sled @durov",
@@ -682,15 +682,15 @@ def kb_cmd() -> InlineKeyboardMarkup:
 
 def kb_admin() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Дашборд",           callback_data="adm_dash")],
+        [InlineKeyboardButton(text="◆ Дашборд",           callback_data="adm_dash")],
         [InlineKeyboardButton(text="◆ Пользователи",       callback_data="adm_users")],
         [InlineKeyboardButton(text="◆ Статистика",         callback_data="adm_stats")],
-        [InlineKeyboardButton(text="📥 Последние перехваты", callback_data="adm_catches")],
+        [InlineKeyboardButton(text="◆ Последние перехваты", callback_data="adm_catches")],
         [InlineKeyboardButton(text="✦ Предложения",        callback_data="adm_ideas")],
         [InlineKeyboardButton(text="▤ Сообщение всем",     callback_data="adm_broadcast")],
         [InlineKeyboardButton(text="▤ По группам/каналам", callback_data="adm_broadcast_groups")],
-        [InlineKeyboardButton(text="🛡 Гейт подписки",     callback_data="adm_gate")],
-        [InlineKeyboardButton(text="🔑 Проверка ключей",   callback_data="adm_keys")],
+        [InlineKeyboardButton(text="◆ Гейт подписки",     callback_data="adm_gate")],
+        [InlineKeyboardButton(text="◆ Проверка ключей",   callback_data="adm_keys")],
         [InlineKeyboardButton(text="← В меню",             callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (

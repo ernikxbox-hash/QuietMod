@@ -56,7 +56,7 @@ def _is_admin(call: CallbackQuery) -> bool:
 @dp.callback_query(F.data == "adm")
 async def cb_adm(call: CallbackQuery, state: FSMContext):
     if not _is_admin(call):
-        await call.answer("⛔", show_alert=True)
+        await call.answer("✕", show_alert=True)
         return
     await state.clear()
     await call.answer()
@@ -95,19 +95,19 @@ async def _render_dashboard() -> str:
      whisper, stars, ideas, chats) = results[:15]
     day_counts = results[15:]
     lines = [
-        "📊 <b>ДАШБОРД</b> · Quiet Mod 👁️",
+        "◆ <b>ДАШБОРД</b> · Quiet Mod 👁️",
         f"<code>{LINE}</code>",
-        f"👥 Пользователи:  <b>{users}</b>  (+{users24} за 24ч)",
-        f"💬 Сообщений:     <b>{msgs}</b>  (+{msgs24} за 24ч)",
-        f"🚀 Запуски:        сегодня <b>{l_today}</b> · 7д <b>{l_week}</b> · всего <b>{l_all}</b>",
+        f"◇ Пользователи:  <b>{users}</b>  (+{users24} за 24ч)",
+        f"◇ Сообщений:     <b>{msgs}</b>  (+{msgs24} за 24ч)",
+        f"◇ Запуски:        сегодня <b>{l_today}</b> · 7д <b>{l_week}</b> · всего <b>{l_all}</b>",
         f"✕ Удалённых:      <b>{del_all}</b>  (сегодня {del_today})",
         f"✦ Изменённых:     <b>{ed_all}</b>  (сегодня {ed_today})",
-        f"🎤 Расшифровок:   <b>{whisper}</b>",
+        f"◇ Расшифровок:   <b>{whisper}</b>",
         f"⟡ Звёзд собрано:  <b>{stars}</b>",
         f"✦ Предложений:    <b>{ideas}</b>",
         f"▤ Бот в чатах:    <b>{chats}</b>",
         f"<code>{LINE}</code>",
-        "📈 <b>Запуски · 7 дней</b>",
+        "◆ <b>Запуски · 7 дней</b>",
     ]
     for d in range(6, -1, -1):
         cnt = day_counts[d]
@@ -140,7 +140,7 @@ async def cb_adm_gate(call: CallbackQuery):
     if not _is_admin(call):
         return
     await call.answer()
-    lines = [f"🛡 <b>Гейт подписки</b>\n{LINE}"]
+    lines = [f"◆ <b>Гейт подписки</b>\n{LINE}"]
     if not CHANNEL_USERNAME.strip():
         lines.append("◇ Канал: <b>не задан</b> (CHANNEL_USERNAME) — гейт выключен")
     else:
@@ -157,11 +157,11 @@ async def cb_adm_gate(call: CallbackQuery):
             lines.append("◇ Бот в канале: <b>НЕТ</b> — канал не найден / бот не добавлен")
         st = await check_subscription_status(ADMIN_ID, fresh=True)
         if st is True:
-            lines.append("◇ Твоя подписка: ✅ подписан — доступ работает")
+            lines.append("◇ Твоя подписка: <b>подписан</b> — доступ работает")
         elif st is False:
-            lines.append("◇ Твоя подписка: ❌ НЕ подписан — доступ закрыт!")
+            lines.append("◇ Твоя подписка: <b>НЕ подписан</b> — доступ закрыт!")
         else:
-            lines.append("◇ Твоя подписка: ⚠️ не удалось проверить (сбой API)")
+            lines.append("◇ Твоя подписка: не удалось проверить (сбой API)")
     await call.message.edit_text(
         "\n".join(lines),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -200,19 +200,22 @@ async def cb_adm_keys(call: CallbackQuery):
     await call.answer()
     if not GROQ_API_KEYS:
         await call.message.edit_text(
-            f"🔑 <b>Проверка API-ключей</b>\n{LINE}\n\nКлючи не настроены.",
+            f"◆ <b>Проверка API-ключей</b>\n{LINE}\n\nКлючи не настроены.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="← В меню", callback_data="adm")]
             ]),
         )
         return
     await call.message.edit_text(
-        f"🔑 Проверяю {len(GROQ_API_KEYS)} ключ(а)…\n{LINE}\n◇ Живой запрос к Groq по каждому."
+        f"◇ Проверяю {len(GROQ_API_KEYS)} ключ(а)…\n{LINE}\n◇ Живой запрос к Groq по каждому."
     )
     results = await asyncio.gather(*[_probe_groq_key(k) for k in GROQ_API_KEYS])
-    lines = [f"🔑 <b>Проверка API-ключей</b>\n{LINE}"]
+    lines = [f"◆ <b>Проверка API-ключей</b>\n{LINE}"]
     for i, (ok, err) in enumerate(results, start=1):
-        lines.append(f"   Ключ {i}: {'✅ ' + html_escape(err) if ok else '❌ ' + html_escape(err)}")
+        if ok:
+            lines.append(f"   Ключ {i}: <b>работает</b>")
+        else:
+            lines.append(f"   Ключ {i}: <b>ОШИБКА</b> — {html_escape(err)}")
     lines += [
         f"<code>{LINE}</code>",
         "◇ Модель: " + GROQ_MODEL,
@@ -239,11 +242,11 @@ async def cb_adm_catches(call: CallbackQuery):
     ])
     if not catches:
         await call.message.edit_text(
-            f"📥 <b>Последние перехваты</b>\n{LINE}\n\nПусто.",
+            f"◆ <b>Последние перехваты</b>\n{LINE}\n\nПусто.",
             reply_markup=back_kb,
         )
         return
-    lines = [f"📥 <b>Последние перехваты</b>\n{LINE}"]
+    lines = [f"◆ <b>Последние перехваты</b>\n{LINE}"]
     for c in catches:
         icon = "✕" if c["event_type"] == "deleted" else "✦"
         name = html_escape((c.get("from_name") or "?")[:24])
@@ -287,7 +290,7 @@ async def _render_users_page(page: int) -> tuple[str, InlineKeyboardMarkup]:
     rows = []
     if nav:
         rows.append(nav)
-    rows.append([InlineKeyboardButton(text="🔍 Поиск пользователя", callback_data="adm_users_search")])
+    rows.append([InlineKeyboardButton(text="◇ Поиск пользователя", callback_data="adm_users_search")])
     rows.append([InlineKeyboardButton(text="← В меню", callback_data="adm")])
     return text, InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -316,7 +319,7 @@ async def cb_adm_users_search(call: CallbackQuery, state: FSMContext):
     await call.answer()
     await state.set_state(S.adm_search)
     await call.message.edit_text(
-        f"🔍 <b>Поиск пользователя</b>\n{LINE}\n\n"
+        f"◆ <b>Поиск пользователя</b>\n{LINE}\n\n"
         "Пришли числовой ID или @username —\n"
         "покажу карточку (регистрация, рефералы, архив):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -334,7 +337,7 @@ async def on_adm_search(msg: Message, state: FSMContext):
     await state.clear()
     query = (msg.text or "").strip().lstrip("@")
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔍 Ещё поиск", callback_data="adm_users_search")],
+        [InlineKeyboardButton(text="◇ Ещё поиск", callback_data="adm_users_search")],
         [InlineKeyboardButton(text="← К списку", callback_data="adm_users")],
         [InlineKeyboardButton(text="← В меню", callback_data="adm")],
     ])
@@ -349,14 +352,14 @@ async def on_adm_search(msg: Message, state: FSMContext):
                 uid = resolved.get("id")
     if uid is None:
         await msg.answer(
-            f"🔍 <b>Поиск пользователя</b>\n{LINE}\n\n"
+            f"◆ <b>Поиск пользователя</b>\n{LINE}\n\n"
             f"◇ <code>{html_escape(query or '?')}</code> — не найден.\n"
             "◇ Попробуй числовой ID или точный @username.",
             reply_markup=back_kb,
         )
         return
     lines = [
-        f"👤 <b>ПОЛЬЗОВАТЕЛЬ</b> · <code>{uid}</code>\n{LINE}",
+        f"◆ <b>ПОЛЬЗОВАТЕЛЬ</b> · <code>{uid}</code>\n{LINE}",
         f"◇ Профиль: <a href=\"tg://user?id={uid}\">открыть в Telegram</a>",
     ]
     u = await db.get_user(uid)
@@ -429,21 +432,21 @@ async def _render_stats() -> tuple[str, InlineKeyboardMarkup]:
         fail_a = key_fail_a[i]
         ok_total += ok_a
         key_lines.append(
-            f"   🔑 Ключ {i + 1}: <b>{ok_a}</b> ok (сегодня {ok_t}) · ошибок <b>{fail_a}</b>"
+            f"   ◇ Ключ {i + 1}: <b>{ok_a}</b> ok (сегодня {ok_t}) · ошибок <b>{fail_a}</b>"
         )
     if not key_lines:
         key_lines = ["   — ключи не настроены —"]
     text = (
         f"◆ <b>Статистика бота</b>\n{LINE}\n"
-        f"🚀 Запуски:  сегодня <b>{launches[0]}</b> · 7д <b>{launches[1]}</b> · "
+        f"◇ Запуски:  сегодня <b>{launches[0]}</b> · 7д <b>{launches[1]}</b> · "
         f"30д <b>{launches[2]}</b> · всего <b>{launches[3]}</b>\n"
         f"{LINE}\n"
-        f"🤖 <b>Groq API</b> (успешных ответов: <b>{ok_total}</b>)\n"
+        f"◆ <b>Groq API</b> (успешных ответов: <b>{ok_total}</b>)\n"
         + "\n".join(key_lines)
         + f"\n{LINE}\n"
         f"✕ Перехвачено удалённых:   <b>{del_caught}</b>\n"
         f"✦ Перехвачено изменённых:  <b>{ed_caught}</b>\n"
-        f"🎤 Расшифровок голосовых:  <b>{whisper}</b>\n"
+        f"◇ Расшифровок голосовых:  <b>{whisper}</b>\n"
         f"{LINE}\n"
         f"◇ Пользователей:  <b>{users}</b>\n"
         f"◇ Записей в БД:   <b>{msgs}</b>\n"
@@ -453,7 +456,7 @@ async def _render_stats() -> tuple[str, InlineKeyboardMarkup]:
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="⟳ Обновить", callback_data="adm_stats"),
-            InlineKeyboardButton(text="🔄 Сброс ошибок ключей", callback_data="adm_stats_reset_fails"),
+            InlineKeyboardButton(text="◇ Сброс ошибок ключей", callback_data="adm_stats_reset_fails"),
         ],
         [InlineKeyboardButton(text="← Назад", callback_data="adm")],
     ])
@@ -474,7 +477,7 @@ async def cb_adm_stats_reset_fails(call: CallbackQuery):
     if not _is_admin(call): return
     n1 = await db.delete_stats_like("groq_key%_fail")
     n2 = await db.delete_stats_like("whisper_fail")
-    await call.answer(f"🔄 Ошибки сброшены · удалено: {n1 + n2}", show_alert=False)
+    await call.answer(f"◇ Ошибки сброшены · удалено: {n1 + n2}", show_alert=False)
     text, kb = await _render_stats()
     try:
         await call.message.edit_text(text, reply_markup=kb)
@@ -581,7 +584,7 @@ async def on_broadcast_input(msg: Message, state: FSMContext):
                 pass
     await status.edit_text(
         f"▤ <b>Рассылка завершена</b>\n{LINE}\n"
-        f"✔ Доставлено: <b>{ok}</b>\n"
+        f"◇ Доставлено: <b>{ok}</b>\n"
         f"✕ Не доставлено: <b>{fail}</b>",
         reply_markup=kb_admin(),
     )
@@ -841,11 +844,11 @@ async def on_broadcast_groups_input(msg: Message, state: FSMContext):
                 await status.edit_text(f"▤ Рассылка по группам/каналам · {i} / {len(chats)}…")
             except Exception:
                 pass
-    result_parts = [f"✔ Доставлено: <b>{ok}</b>"]
+    result_parts = [f"◇ Доставлено: <b>{ok}</b>"]
     if fail:
         result_parts.append(f"✕ Ошибок: <b>{fail}</b>")
     if removed:
-        result_parts.append(f"🧹 Устаревших чатов удалено: <b>{removed}</b>")
+        result_parts.append(f"◇ Устаревших чатов удалено: <b>{removed}</b>")
     await status.edit_text(
         f"▤ <b>Рассылка по группам/каналам завершена</b>\n{LINE}\n" + "\n".join(result_parts),
         reply_markup=kb_admin(),
@@ -880,7 +883,7 @@ async def on_group_msg(msg: Message):
     if msg.voice or msg.video_note:
         media_label = "голосового" if msg.voice else "кружка"
         try:
-            thinking = await msg.reply("🎤 Расшифровываю…")
+            thinking = await msg.reply("◆ · · ·")
         except Exception as e:
             log.error(f"group voice thinking reply: {e}")
             return
@@ -900,7 +903,7 @@ async def on_group_msg(msg: Message):
                 await _edit_ai_html(
                     thinking,
                     prefix="",
-                    answer="😔 <b>Не удалось расшифровать</b> — попробуй ещё раз.",
+                    answer="◇ <b>Не удалось расшифровать</b> — попробуй ещё раз."
                 )
         except Exception as e:
             log.error(f"group voice/video transcription: {e}")
@@ -908,7 +911,7 @@ async def on_group_msg(msg: Message):
                 await _edit_ai_html(
                     thinking,
                     prefix="",
-                    answer="😔 <b>Не удалось расшифровать</b> — попробуй ещё раз.",
+                    answer="◇ <b>Не удалось расшифровать</b> — попробуй ещё раз."
                 )
             except Exception:
                 try:
