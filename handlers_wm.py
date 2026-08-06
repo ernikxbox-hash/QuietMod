@@ -10,11 +10,18 @@
 полупрозрачная подпись, повёрнутая на -30° (классическая диагональная сетка —
 защита от воровства). Тень под текстом делает его читаемым на любом фоне.
 Размер шрифта пропорционален диагонали фото. Шрифт с кириллицей ищется среди
-системных (DejaVu Sans / Arial / Helvetica); если не найден — дефолтный PIL.
-Обработка идёт в фоновом потоке (asyncio.to_thread) — бот не зависает.
+системных (DejaVu / Liberation / Arial / Helvetica / Tahoma); если не найден —
+скачивается DejaVuSans.ttf с GitHub raw и кэшируется в temp-файл (тот же
+источник, что RAMKA_URL для .ramka). Дефолтный PIL-шрифт — только последний
+рубеж, он не знает кириллицу. Обработка идёт в фоновом потоке
+(asyncio.to_thread) — бот не зависает.
 """
 import asyncio
 import os
+import tempfile
+import threading
+import time
+import urllib.request
 from html import escape as html_escape
 from io import BytesIO
 from typing import Optional
@@ -45,35 +52,86 @@ from functions import LINE
 _WM_MAX_CHARS = 64  # дольше не нужно — плитка станет громоздкой
 
 # Системные TTF с кириллицей (поиск по ОС: Linux-сервер, macOS, Windows).
+# Если ни одного нет — скачиваем DejaVuSans.ttf (см. _wm_download_font).
 _WM_FONT_CANDIDATES = (
+    # Linux (Debian/Ubuntu и производные)
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    # macOS
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/System/Library/Fonts/Helvetica.ttc",
+    # Windows
     "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/tahoma.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "C:/Windows/Fonts/verdana.ttf",
+)
+# DejaVuSans — свободный шрифт с полной кириллицей; качаем с GitHub raw
+# (тот же источник, что RAMKA_URL у .ramka) и кэшируем в temp-файл.
+# Два зеркала на случай недоступности одного из них.
+_WM_FONT_URLS = (
+    "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf",
+    "https://raw.githubusercontent.com/matplotlib/matplotlib/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
 )
 
+_WM_FONT_DL: Optional[str] = None    # путь к скачанному DejaVuSans.ttf (кэш)
+_WM_FONT_DL_FAIL_TS: float = 0.0     # время неудачной попытки — ретрай через 5 мин
+_WM_FONT_DL_TTL = 300.0              # как фейл-кэш у _ramka_load_png
+_WM_FONT_FALLBACK_LOGGED = False     # предупреждение о шрифте пишем один раз
+_WM_FONT_LOCK = threading.Lock()     # рендер идёт в потоках — защищаем загрузку
 
-_WM_FONT_FALLBACK_LOGGED = False  # предупреждение о шрифте пишем один раз
+
+def _wm_download_font() -> Optional[str]:
+    """Скачивает DejaVuSans.ttf (полная кириллица) в temp-файл. None — не вышло."""
+    tmp = os.path.join(tempfile.gettempdir(), "quietmod_DejaVuSans.ttf")
+    if os.path.exists(tmp) and os.path.getsize(tmp) > 100_000:
+        return tmp
+    for url in _WM_FONT_URLS:
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = resp.read()
+            if not data or len(data) < 100_000:
+                log.warning(f"wm: скачанный шрифт подозрительно мал ({len(data) if data else 0} байт)")
+                return None
+            with open(tmp, "wb") as f:
+                f.write(data)
+            log.info(f"wm: шрифт DejaVuSans скачан ({len(data) // 1024} КБ)")
+            return tmp
+        except Exception as e:
+            log.warning(f"wm: не удалось скачать шрифт ({e})")
+    return None
 
 
 def _wm_font(size: int):
-    """TTF с кириллицей (DejaVu/Arial/Helvetica) или дефолтный PIL-шрифт.
+    """TTF с кириллицей: системный шрифт → скачанный DejaVuSans → дефолтный PIL.
 
-    На сервере без системных шрифтов (минимальный Docker-образ) поставь
-    fonts-dejavu-core — иначе кириллица в знаке превратится в квадратики.
+    Дефолтный PIL-шрифт не знает кириллицу (покажет квадратики), поэтому он —
+    только последний рубеж, если нет ни системного шрифта, ни интернета.
     """
+    global _WM_FONT_DL, _WM_FONT_DL_FAIL_TS, _WM_FONT_FALLBACK_LOGGED
     for p in _WM_FONT_CANDIDATES:
         if os.path.exists(p):
             try:
                 return ImageFont.truetype(p, size)
             except Exception:
                 continue
-    global _WM_FONT_FALLBACK_LOGGED
+    with _WM_FONT_LOCK:
+        if _WM_FONT_DL is None and time.monotonic() - _WM_FONT_DL_FAIL_TS > _WM_FONT_DL_TTL:
+            _WM_FONT_DL = _wm_download_font()
+            if _WM_FONT_DL is None:
+                _WM_FONT_DL_FAIL_TS = time.monotonic()
+    if _WM_FONT_DL:
+        try:
+            return ImageFont.truetype(_WM_FONT_DL, size)
+        except Exception:
+            pass
     if not _WM_FONT_FALLBACK_LOGGED:
         _WM_FONT_FALLBACK_LOGGED = True
-        log.warning("wm: системный TTF не найден — дефолтный PIL-шрифт может не поддерживать кириллицу (нужен fonts-dejavu-core)")
+        log.warning("wm: шрифт с кириллицей недоступен — дефолтный PIL-шрифт покажет квадратики вместо текста")
     try:
         # Pillow >= 10.1 умеет масштабировать встроенный шрифт
         return ImageFont.load_default(size)
