@@ -17,7 +17,7 @@ from aiogram.filters import StateFilter
 from aiogram.types import Message
 
 from business_api import _business_edit_message, _get_owner_id_cached
-from core import BOT_USERNAME, log
+from core import BOT_USERNAME, dp, log
 from functions import LINE
 
 _MAX_INPUT = 800     # максимум символов исходного текста
