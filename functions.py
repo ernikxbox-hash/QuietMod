@@ -35,6 +35,26 @@ user_afk: dict[int, dict] = {}  # AFK из ЛС с ботом: user_id -> {owner
 knb_games: dict[tuple, dict] = {}  # ("dm"|"bg", conn_id, chat_id) или ("group", chat_id) -> состояние игры .knb
 business_code_mode: set[str] = set()
 business_wbl_chats: set[tuple[str, int]] = set()
+business_black_words: dict[tuple[str, int], list[str]] = {}  # (conn_id, chat_id) -> слова чёрного списка .black
+business_black_off: set[tuple[str, int]] = set()  # чаты, где .black выключен (.unblack)
+
+
+async def load_black_state() -> None:
+    """Загружает чёрные списки .black из БД в память (вызывается при старте бота).
+
+    Память остаётся горячим кэшем для быстрых проверок в перехвате, БД —
+    источником истины, переживающим рестарты.
+    """
+    try:
+        data = await db.load_black_words()
+        business_black_words.clear()
+        business_black_words.update(data)
+        off = await db.load_black_disabled()
+        business_black_off.clear()
+        business_black_off.update(off)
+        log.info(f"⬛ Чёрные списки .black загружены: {len(business_black_words)} чатов")
+    except Exception as e:
+        log.warning(f"⬛ load black state: {e}")
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
 PROFANITY_RE = re.compile(
     r"(?iu)\b("
@@ -153,6 +173,29 @@ def _wbl_should_delete(text: str) -> bool:
     if _contains_profanity(text):
         return True
     return _wbl_looks_like_flood(text)
+
+
+def _black_normalize_word(word: str) -> str:
+    """Нормализация слова чёрного списка: нижний регистр, ё→е, без обводки."""
+    return (word or "").lower().replace("ё", "е").strip()
+
+
+def _black_should_delete(words: list[str], text: str) -> bool:
+    """True, если в тексте собеседника есть слово из чёрного списка (или его форма).
+
+    Ищем по границе начала слова и ловим формы: слово «пицца» из списка
+    удалит и «пицца», и «пиццы», и «пиццу». Кириллица/латиница: слова
+    нормализуются через _black_normalize_word, текст — в нижний регистр с ё→е.
+    """
+    if not words or not text:
+        return False
+    t = _black_normalize_word(text)
+    for w in words:
+        if not w:
+            continue
+        if re.search(rf"(^|[^a-zа-я0-9]){re.escape(w)}[a-zа-я0-9]*([^a-zа-я0-9]|$)", t):
+            return True
+    return False
 MEDIA_MAP = {
     "photo":      "◆ Фото",
     "video":      "◆ Видео",
@@ -541,6 +584,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".unwbl — выключить",
         "note": "Защита от мата, обфускации, флуда"
     },
+    "black": {
+        "title": "◇ .black",
+        "desc": "Личный чёрный список слов — сообщения собеседника с этими словами удаляются.",
+        "usage": ".black слово · .black слово, слово · .black clear · .black del слово",
+        "example": ".black пицца, долг",
+        "note": "Только для личных чатов (Business) · .unblack — выключить · .black слово — включить"
+    },
     "price": {
         "title": "◇ .price",
         "desc": "Оценка стоимости юзернейма (как на Fragment).",
@@ -684,7 +734,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "price", "info", "curs", "knb", "level", "who", "ramka", "stik", "krom", "voice", "wm", "gif",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "black", "price", "info", "curs", "knb", "level", "who", "ramka", "stik", "krom", "voice", "wm", "gif",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled"]
     rows = []
     for i in range(0, len(cmd_keys), 2):

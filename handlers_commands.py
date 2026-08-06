@@ -35,6 +35,8 @@ from functions import (
     business_code_mode,
     business_muted_chats,
     business_nomute_chats,
+    business_black_off,
+    business_black_words,
     business_spam_tasks,
     business_wbl_chats,
     groq_chat,
@@ -621,6 +623,162 @@ async def cb_unwbl_btn(call: CallbackQuery):
             f"— 👁️ @{BOT_USERNAME}"
         ),
         reply_markup={"inline_keyboard": []},
+    )
+
+
+# ── .black / .unblack (Business) — личный чёрный список слов ───────────
+def _black_key(conn_id: str, chat_id: int) -> tuple[str, int]:
+    return (conn_id, chat_id)
+
+
+def _black_split_words(raw: str) -> list[str]:
+    """«слово, слово, слово» → [слово, слово, слово].
+
+    Режем по запятым, пробелам и переносам; нормализуем (нижний регистр,
+    ё→е); фильтруем пустые и слишком длинные (> 40 символов).
+    """
+    out = []
+    for chunk in re.split(r"[,\s\n]+", raw or ""):
+        w = chunk.strip().lower().replace("ё", "е")
+        if w and len(w) <= 40 and w not in out:
+            out.append(w)
+    return out
+
+
+def _black_list_text(words: list[str]) -> str:
+    if not words:
+        return "◇ Список пуст."
+    shown = words[:20]
+    lines = ["◇ <b>Слова в списке:</b>"]
+    lines.append("◇ " + " · ".join(f"<code>{html_escape(w)}</code>" for w in shown))
+    if len(words) > 20:
+        lines.append(f"◇ … и ещё {len(words) - 20}")
+    return "\n".join(lines)
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.black(\s+.*)?$"))
+async def on_black_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".black")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    key = _black_key(msg.business_connection_id, msg.chat.id)
+    raw = (msg.text or "").strip()[6:].strip()  # после ".black"
+    words = business_black_words.setdefault(key, [])
+    if not raw:
+        state = "<b>выключен</b>" if key in business_black_off else "<b>включён</b>"
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            (
+                "⬛ <b>ЧЁРНЫЙ СПИСОК</b>\n"
+                f"<code>{LINE}</code>\n\n"
+                f"◇ Статус: {state}\n"
+                f"{_black_list_text(words)}\n\n"
+                f"<code>{LINE}</code>\n"
+                "◇ Добавить: <code>.black слово</code>\n"
+                "   или <code>.black слово, слово</code>\n"
+                "◇ Удалить: <code>.black del слово</code>\n"
+                "◇ Очистить всё: <code>.black clear</code>\n"
+                "◇ Выключить: <code>.unblack</code>\n\n"
+                f"— 👁️ @{BOT_USERNAME}"
+            ),
+        )
+        return
+    low = raw.lower().replace("ё", "е")
+    if low == "clear":
+        words.clear()
+        try:
+            await db.save_black_words(msg.business_connection_id, msg.chat.id, [])
+        except Exception as e:
+            log.warning(f"⬛ black clear db: {e}")
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            (
+                "⬛ <b>ЧЁРНЫЙ СПИСОК</b>\n"
+                f"<code>{LINE}</code>\n\n"
+                "◇ Все слова <b>очищены</b>\n\n"
+                f"— 👁️ @{BOT_USERNAME}"
+            ),
+        )
+        return
+    if low.startswith("del "):
+        removed = _black_split_words(raw[4:])
+        left = [w for w in words if w not in removed]
+        removed_now = len(words) - len(left)
+        words[:] = left
+        try:
+            await db.save_black_words(msg.business_connection_id, msg.chat.id, words)
+        except Exception as e:
+            log.warning(f"⬛ black del db: {e}")
+        await _business_edit_message(
+            msg.business_connection_id, msg.chat.id, msg.message_id,
+            (
+                "⬛ <b>ЧЁРНЫЙ СПИСОК</b>\n"
+                f"<code>{LINE}</code>\n\n"
+                f"◇ Удалено слов: <b>{removed_now}</b>\n"
+                f"{_black_list_text(words)}\n\n"
+                f"— 👁️ @{BOT_USERNAME}"
+            ),
+        )
+        return
+    # Добавление слов — заодно включает фильтр
+    new_words = _black_split_words(raw)
+    added = [w for w in new_words if w not in words]
+    words.extend(added)
+    business_black_off.discard(key)
+    try:
+        await db.save_black_words(msg.business_connection_id, msg.chat.id, words)
+        await db.set_black_enabled(msg.business_connection_id, msg.chat.id, True)
+    except Exception as e:
+        log.warning(f"⬛ black add db: {e}")
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "⬛ <b>ЧЁРНЫЙ СПИСОК</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            f"◇ Добавлено: <b>{len(added)}</b>\n"
+            f"{_black_list_text(words)}\n\n"
+            "◇ Сообщения с этими словами будут\n"
+            "   удаляться от собеседника\n\n"
+            f"<code>{LINE}</code>\n"
+            "◇ Выключить: <code>.unblack</code>\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
+    )
+
+
+@dp.business_message(F.text.regexp(r"(?i)^\.unblack$"))
+async def on_unblack_inline(msg: Message):
+    if not msg.business_connection_id:
+        return
+    if getattr(msg.chat, "type", None) != "private":
+        return
+    owner_id = await _get_owner_id_cached(msg.business_connection_id, ".unblack")
+    if owner_id is None:
+        return
+    if not msg.from_user or msg.from_user.id != owner_id:
+        return
+    key = _black_key(msg.business_connection_id, msg.chat.id)
+    business_black_off.add(key)
+    try:
+        await db.set_black_enabled(msg.business_connection_id, msg.chat.id, False)
+    except Exception as e:
+        log.warning(f"⬛ black unblack db: {e}")
+    await _business_edit_message(
+        msg.business_connection_id, msg.chat.id, msg.message_id,
+        (
+            "⬛ <b>ЧЁРНЫЙ СПИСОК</b>\n"
+            f"<code>{LINE}</code>\n\n"
+            "◇ Фильтр <b>выключен</b>\n"
+            "◇ Слова остались в списке — включить\n"
+            "   обратно: <code>.black слово</code>\n\n"
+            f"— 👁️ @{BOT_USERNAME}"
+        ),
     )
 
 

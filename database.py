@@ -208,6 +208,20 @@ async def init_db():
         chat_id INTEGER PRIMARY KEY,
         enabled INTEGER NOT NULL DEFAULT 1
     );
+
+    CREATE TABLE IF NOT EXISTS black_words (
+        conn_id   TEXT    NOT NULL,
+        chat_id   INTEGER NOT NULL,
+        word      TEXT    NOT NULL,
+        PRIMARY KEY (conn_id, chat_id, word)
+    );
+
+    CREATE TABLE IF NOT EXISTS black_settings (
+        conn_id TEXT NOT NULL,
+        chat_id INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        PRIMARY KEY (conn_id, chat_id)
+    );
     """)
     await _conn.commit()
     try:
@@ -941,5 +955,55 @@ async def set_level_enabled(chat_id: int, enabled: bool):
         """, (chat_id, 1 if enabled else 0))
         await conn.commit()
 
+
+# ─── .black: личный чёрный список слов (хранится в БД, переживает рестарты) ──
+async def load_black_words() -> dict[tuple[str, int], list[str]]:
+    """Все слова чёрных списков: {(conn_id, chat_id): [word, ...]}."""
+    conn = _get_conn()
+    out: dict[tuple[str, int], list[str]] = {}
+    async with conn.execute(
+        "SELECT conn_id, chat_id, word FROM black_words ORDER BY rowid"
+    ) as cur:
+        for r in await cur.fetchall():
+            out.setdefault((r[0], r[1]), []).append(r[2])
+    return out
+
+
+async def load_black_disabled() -> set[tuple[str, int]]:
+    """Чаты, где .black выключен (.unblack): {(conn_id, chat_id)}."""
+    conn = _get_conn()
+    out: set[tuple[str, int]] = set()
+    async with conn.execute(
+        "SELECT conn_id, chat_id FROM black_settings WHERE enabled=0"
+    ) as cur:
+        for r in await cur.fetchall():
+            out.add((r[0], r[1]))
+    return out
+
+
+async def save_black_words(conn_id: str, chat_id: int, words: list[str]):
+    """Полностью перезаписывает список слов чата (добавление/удаление/очистка)."""
+    conn = _get_conn()
+    async with _write_lock:
+        await conn.execute(
+            "DELETE FROM black_words WHERE conn_id=? AND chat_id=?", (conn_id, chat_id)
+        )
+        if words:
+            await conn.executemany(
+                "INSERT INTO black_words (conn_id, chat_id, word) VALUES (?,?,?)",
+                [(conn_id, chat_id, w) for w in words],
+            )
+        await conn.commit()
+
+
+async def set_black_enabled(conn_id: str, chat_id: int, enabled: bool):
+    """Вкл/выкл фильтра .black для чата."""
+    conn = _get_conn()
+    async with _write_lock:
+        await conn.execute("""
+            INSERT INTO black_settings (conn_id, chat_id, enabled) VALUES (?, ?, ?)
+            ON CONFLICT(conn_id, chat_id) DO UPDATE SET enabled=excluded.enabled
+        """, (conn_id, chat_id, 1 if enabled else 0))
+        await conn.commit()
 
 

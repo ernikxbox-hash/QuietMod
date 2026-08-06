@@ -25,10 +25,13 @@ from core import BOT_TOKEN, BOT_USERNAME, GROQ_API_KEYS, bot, dp, get_http, log
 from functions import (
     LINE,
     MEDIA_MAP,
+    _black_should_delete,
     _send_notify,
     _wbl_should_delete,
     business_afk,
     business_afk_last_reply,
+    business_black_off,
+    business_black_words,
     business_code_mode,
     business_muted_chats,
     business_nomute_chats,
@@ -56,7 +59,7 @@ def _extract_media(msg: Message) -> tuple[str, Optional[str]]:
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
-    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".cmd", ".knb", ".ramka", ".stik", ".krom", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
+    if msg.text and msg.text.lower().startswith((".ai ", ".spam ", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".black", ".unblack", ".cmd", ".knb", ".ramka", ".stik", ".krom", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
@@ -104,6 +107,22 @@ async def on_business_msg(msg: Message):
         if not ok and retry_after:
             await asyncio.sleep(int(retry_after))
             await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        return
+    if (
+        getattr(msg.chat, "type", None) == "private"
+        and msg.from_user
+        and msg.from_user.id != owner_id
+        and (msg.business_connection_id, msg.chat.id) not in business_black_off
+        and _black_should_delete(
+            business_black_words.get((msg.business_connection_id, msg.chat.id), []),
+            msg.text or msg.caption or "",
+        )
+    ):
+        ok, retry_after, _ = await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        if not ok and retry_after:
+            await asyncio.sleep(int(retry_after))
+            await _business_delete_message_ex(msg.business_connection_id, msg.message_id)
+        log.debug(f"⬛ black deleted msg={msg.message_id} owner={owner_id}")
         return
     if (
         getattr(msg.chat, "type", None) == "private"
