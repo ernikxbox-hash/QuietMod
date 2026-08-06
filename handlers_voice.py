@@ -133,11 +133,11 @@ async def _voice_cleanup(thinking: Optional[Message]) -> None:
 async def _voice_status(text: str, voice: str, chat_id: int, send_fn,
                         business_connection_id: Optional[str] = None) -> bool:
     """Статус-сообщение → озвучка выбранным голосом → уборка. False при ошибке."""
-    thinking = await send_fn("🎙 Озвучиваю…")
+    thinking = await send_fn("◆ · · ·")
     ok = await _voice_run(text, voice, chat_id, business_connection_id=business_connection_id)
     await _voice_cleanup(thinking)
     if not ok:
-        await send_fn("😔 Не получилось озвучить — попробуй ещё раз.")
+        await send_fn("◇ Не получилось озвучить — попробуй ещё раз.")
     return ok
 
 
@@ -163,7 +163,7 @@ def _voice_body(msg: Message) -> tuple[str, str]:
 
 
 _VOICE_HINT = (
-    f"🎙 <b>.voice</b> — напиши <code>.voice текст</code>,\n"
+    f"◇ <b>.voice</b> — напиши <code>.voice текст</code>,\n"
     f"◇ я озвучу его голосовым сообщением (ИИ-голос).\n\n"
     f"◇ <b>Голос:</b>\n"
     f"   <code>.voice м: текст</code> — Дмитрий (мужской)\n"
@@ -201,7 +201,7 @@ async def on_voice_business(msg: Message):
     if not text:
         await _business_edit_message(conn_id, msg.chat.id, msg.message_id, _VOICE_HINT)
         return
-    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "🎙 Озвучиваю…")
+    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "◆ · · ·")
     if not ok:
         return
     if await _voice_run(text, voice, msg.chat.id, business_connection_id=conn_id):
@@ -212,7 +212,7 @@ async def on_voice_business(msg: Message):
     else:
         await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
-            "😔 Не получилось озвучить — попробуй ещё раз.",
+            "◇ Не получилось озвучить — попробуй ещё раз.",
         )
 
 

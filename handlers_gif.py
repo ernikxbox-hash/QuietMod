@@ -151,11 +151,11 @@ async def _gif_cleanup(thinking: Optional[Message]) -> None:
 async def _gif_status(video: Video, chat_id: int, send_fn,
                       business_connection_id: Optional[str] = None) -> bool:
     """Статус-сообщение → обработка видео → уборка. False при ошибке (с ответом)."""
-    thinking = await send_fn("🎞 Делаю гифку…")
+    thinking = await send_fn("◆ · · ·")
     ok = await _gif_run(video, chat_id, business_connection_id=business_connection_id)
     await _gif_cleanup(thinking)
     if not ok:
-        await send_fn("😔 Не получилось сделать гифку — попробуй другое видео.")
+        await send_fn("◇ Не получилось сделать гифку — попробуй другое видео.")
     return ok
 
 
@@ -168,7 +168,7 @@ def _gif_reply_video(msg: Message) -> Optional[Video]:
 
 
 _GIF_HINT = (
-    f"🎞 <b>.gif</b> — ответь на <b>видео</b> и напиши <code>.gif</code>,\n"
+    f"◇ <b>.gif</b> — ответь на <b>видео</b> и напиши <code>.gif</code>,\n"
     f"◇ я превращу его в анимированную гифку (до {_GIF_MAX_SEC} сек).\n\n"
     f"— 👁️ @{BOT_USERNAME}"
 )
@@ -187,7 +187,7 @@ async def on_gif_dm(msg: Message, state: FSMContext):
         return
     await state.set_state(S.gif)
     await msg.answer(
-        f"🎞 <b>ГИФКА ИЗ ВИДЕО</b>\n{LINE}\n\n"
+        f"◆ <b>ГИФКА ИЗ ВИДЕО</b>\n<code>{LINE}</code>\n\n"
         "◇ Пришли видео — сделаю из него гифку.\n"
         "◇ Или ответь на чьё-то видео и напиши <code>.gif</code> —\n"
         "   так работает и в чатах.\n\n"
@@ -231,7 +231,7 @@ async def on_gif_business(msg: Message):
             conn_id, msg.chat.id, msg.message_id, _GIF_HINT,
         )
         return
-    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "🎞 Делаю гифку…")
+    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "◆ · · ·")
     if not ok:
         return
     if await _gif_run(video, msg.chat.id, business_connection_id=conn_id):
@@ -242,7 +242,7 @@ async def on_gif_business(msg: Message):
     else:
         await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
-            "😔 Не получилось сделать гифку — попробуй другое видео.",
+            "◇ Не получилось сделать гифку — попробуй другое видео.",
         )
 
 

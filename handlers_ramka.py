@@ -540,11 +540,11 @@ async def _ramka_cleanup(thinking: Optional[Message]) -> None:
 async def _ramka_status(photo: PhotoSize, chat_id: int, send_fn,
                         business_connection_id: Optional[str] = None) -> bool:
     """Статус-сообщение → обработка фото → уборка. False при ошибке (с ответом)."""
-    thinking = await send_fn("🖼 Делаю рамку…")
+    thinking = await send_fn("◆ · · ·")
     ok = await _ramka_run(photo, chat_id, business_connection_id=business_connection_id)
     await _ramka_cleanup(thinking)
     if not ok:
-        await send_fn("😔 Не получилось наложить рамку — попробуй другое фото.")
+        await send_fn("◇ Не получилось наложить рамку — попробуй другое фото.")
     return ok
 
 
@@ -556,7 +556,7 @@ def _ramka_reply_photo(msg: Message) -> Optional[PhotoSize]:
 
 
 _RAMKA_HINT = (
-    f"🖼 <b>.ramka</b> — ответь на чьё-то <b>фото</b> и напиши <code>.ramka</code>,\n"
+    f"◇ <b>.ramka</b> — ответь на чьё-то <b>фото</b> и напиши <code>.ramka</code>,\n"
     f"◇ я надену на него золотую рамку.\n\n"
     f"— 👁️ @{BOT_USERNAME}"
 )
@@ -575,7 +575,7 @@ async def on_ramka_dm(msg: Message, state: FSMContext):
         return
     await state.set_state(S.ramka)
     await msg.answer(
-        f"🖼 <b>ЗОЛОТАЯ РАМКА</b>\n{LINE}\n\n"
+        f"◆ <b>ЗОЛОТАЯ РАМКА</b>\n<code>{LINE}</code>\n\n"
         "◇ Пришли фото — надену на него рамку.\n"
         "◇ Или ответь на чьё-то фото и напиши <code>.ramka</code> —\n"
         "   так работает и в чатах.\n\n"
@@ -617,11 +617,11 @@ async def on_ramka_business(msg: Message):
     if not photo:
         await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
-            f"🖼 <b>.ramka</b> — ответь на чьё-то <b>фото</b> и напиши <code>.ramka</code>.\n\n"
+            f"◇ <b>.ramka</b> — ответь на чьё-то <b>фото</b> и напиши <code>.ramka</code>.\n\n"
             f"— 👁️ @{BOT_USERNAME}",
         )
         return
-    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "🖼 Делаю рамку…")
+    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "◆ · · ·")
     if not ok:
         return
     if await _ramka_run(photo, msg.chat.id, business_connection_id=conn_id):
@@ -632,7 +632,7 @@ async def on_ramka_business(msg: Message):
     else:
         await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
-            "😔 Не получилось наложить рамку — попробуй другое фото.",
+            "◇ Не получилось наложить рамку — попробуй другое фото.",
         )
 
 

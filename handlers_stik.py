@@ -110,11 +110,11 @@ async def _stik_cleanup(thinking: Optional[Message]) -> None:
 async def _stik_status(photo: PhotoSize, chat_id: int, send_fn,
                        business_connection_id: Optional[str] = None) -> bool:
     """Статус-сообщение → обработка фото → уборка. False при ошибке (с ответом)."""
-    thinking = await send_fn("🏷 Делаю стикер…")
+    thinking = await send_fn("◆ · · ·")
     ok = await _stik_run(photo, chat_id, business_connection_id=business_connection_id)
     await _stik_cleanup(thinking)
     if not ok:
-        await send_fn("😔 Не получилось сделать стикер — попробуй другое фото.")
+        await send_fn("◇ Не получилось сделать стикер — попробуй другое фото.")
     return ok
 
 
@@ -126,7 +126,7 @@ def _stik_reply_photo(msg: Message) -> Optional[PhotoSize]:
 
 
 _STIK_HINT = (
-    f"🏷 <b>.stik</b> — ответь на чьё-то <b>фото</b> и напиши <code>.stik</code>,\n"
+    f"◇ <b>.stik</b> — ответь на чьё-то <b>фото</b> и напиши <code>.stik</code>,\n"
     f"◇ я сделаю из него стикер.\n\n"
     f"— 👁️ @{BOT_USERNAME}"
 )
@@ -145,7 +145,7 @@ async def on_stik_dm(msg: Message, state: FSMContext):
         return
     await state.set_state(S.stik)
     await msg.answer(
-        f"🏷 <b>СТИКЕР ИЗ ФОТО</b>\n{LINE}\n\n"
+        f"◆ <b>СТИКЕР ИЗ ФОТО</b>\n<code>{LINE}</code>\n\n"
         "◇ Пришли фото — сделаю из него стикер.\n"
         "◇ Или ответь на чьё-то фото и напиши <code>.stik</code> —\n"
         "   так работает и в чатах.\n\n"
@@ -189,7 +189,7 @@ async def on_stik_business(msg: Message):
             conn_id, msg.chat.id, msg.message_id, _STIK_HINT,
         )
         return
-    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "🏷 Делаю стикер…")
+    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "◆ · · ·")
     if not ok:
         return
     if await _stik_run(photo, msg.chat.id, business_connection_id=conn_id):
@@ -200,7 +200,7 @@ async def on_stik_business(msg: Message):
     else:
         await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
-            "😔 Не получилось сделать стикер — попробуй другое фото.",
+            "◇ Не получилось сделать стикер — попробуй другое фото.",
         )
 
 

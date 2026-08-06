@@ -123,11 +123,11 @@ async def _krom_cleanup(thinking: Optional[Message]) -> None:
 async def _krom_status(video: Video, chat_id: int, send_fn,
                        business_connection_id: Optional[str] = None) -> bool:
     """Статус-сообщение → обработка видео → уборка. False при ошибке (с ответом)."""
-    thinking = await send_fn("🎥 Делаю кружок…")
+    thinking = await send_fn("◆ · · ·")
     ok = await _krom_run(video, chat_id, business_connection_id=business_connection_id)
     await _krom_cleanup(thinking)
     if not ok:
-        await send_fn("😔 Не получилось сделать кружок — попробуй другое видео.")
+        await send_fn("◇ Не получилось сделать кружок — попробуй другое видео.")
     return ok
 
 
@@ -140,7 +140,7 @@ def _krom_reply_video(msg: Message) -> Optional[Video]:
 
 
 _KROM_HINT = (
-    f"🎥 <b>.krom</b> — ответь на <b>видео</b> и напиши <code>.krom</code>,\n"
+    f"◇ <b>.krom</b> — ответь на <b>видео</b> и напиши <code>.krom</code>,\n"
     f"◇ я превращу его в кружок.\n\n"
     f"— 👁️ @{BOT_USERNAME}"
 )
@@ -159,7 +159,7 @@ async def on_krom_dm(msg: Message, state: FSMContext):
         return
     await state.set_state(S.krom)
     await msg.answer(
-        f"🎥 <b>КРУЖОК ИЗ ВИДЕО</b>\n{LINE}\n\n"
+        f"◆ <b>КРУЖОК ИЗ ВИДЕО</b>\n<code>{LINE}</code>\n\n"
         "◇ Пришли видео — сделаю из него кружок.\n"
         "◇ Или ответь на чьё-то видео и напиши <code>.krom</code> —\n"
         "   так работает и в чатах.\n\n"
@@ -203,7 +203,7 @@ async def on_krom_business(msg: Message):
             conn_id, msg.chat.id, msg.message_id, _KROM_HINT,
         )
         return
-    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "🎥 Делаю кружок…")
+    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "◆ · · ·")
     if not ok:
         return
     if await _krom_run(video, msg.chat.id, business_connection_id=conn_id):
@@ -214,7 +214,7 @@ async def on_krom_business(msg: Message):
     else:
         await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
-            "😔 Не получилось сделать кружок — попробуй другое видео.",
+            "◇ Не получилось сделать кружок — попробуй другое видео.",
         )
 
 

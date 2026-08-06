@@ -232,11 +232,11 @@ async def _wm_cleanup(thinking: Optional[Message]) -> None:
 async def _wm_status(photo: PhotoSize, text: str, chat_id: int, send_fn,
                      business_connection_id: Optional[str] = None) -> bool:
     """Статус-сообщение → обработка фото → уборка. False при ошибке (с ответом)."""
-    thinking = await send_fn("🏷 Ставлю водяной знак…")
+    thinking = await send_fn("◆ · · ·")
     ok = await _wm_run(photo, text, chat_id, business_connection_id=business_connection_id)
     await _wm_cleanup(thinking)
     if not ok:
-        await send_fn("😔 Не получилось наложить знак — попробуй другое фото.")
+        await send_fn("◇ Не получилось наложить знак — попробуй другое фото.")
     return ok
 
 
@@ -255,7 +255,7 @@ def _wm_text(msg: Message) -> str:
 
 
 _WM_HINT = (
-    f"🏷 <b>.wm</b> — ответь на чьё-то <b>фото</b> и напиши <code>.wm текст</code>,\n"
+    f"◇ <b>.wm</b> — ответь на чьё-то <b>фото</b> и напиши <code>.wm текст</code>,\n"
     f"◇ я наложу полупрозрачную подпись по диагонали.\n\n"
     f"◇ Пример: ответь на фото → <code>.wm не воруй</code>\n"
     f"◇ Лимит: до {_WM_MAX_CHARS} символов\n\n"
@@ -281,7 +281,7 @@ async def on_wm_dm(msg: Message, state: FSMContext):
     await state.set_state(S.wm)
     await state.update_data(text=text)
     await msg.answer(
-        f"🏷 <b>ВОДЯНОЙ ЗНАК</b>\n{LINE}\n\n"
+        f"◆ <b>ВОДЯНОЙ ЗНАК</b>\n<code>{LINE}</code>\n\n"
         f"◇ Текст: <i>{html_escape(text)}</i>\n\n"
         "◇ Пришли фото — наложу на него знак.\n"
         "◇ Или ответь на чьё-то фото и напиши <code>.wm текст</code> —\n"
@@ -330,7 +330,7 @@ async def on_wm_business(msg: Message):
     if not photo:
         await _business_edit_message(conn_id, msg.chat.id, msg.message_id, _WM_HINT)
         return
-    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "🏷 Ставлю водяной знак…")
+    ok = await _business_edit_message(conn_id, msg.chat.id, msg.message_id, "◆ · · ·")
     if not ok:
         return
     if await _wm_run(photo, text, msg.chat.id, business_connection_id=conn_id):
@@ -341,7 +341,7 @@ async def on_wm_business(msg: Message):
     else:
         await _business_edit_message(
             conn_id, msg.chat.id, msg.message_id,
-            "😔 Не получилось наложить знак — попробуй другое фото.",
+            "◇ Не получилось наложить знак — попробуй другое фото.",
         )
 
 
