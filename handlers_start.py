@@ -33,6 +33,11 @@ async def on_business_connection(conn: BusinessConnection):
                 conn.user.full_name or "",
                 conn.id,
             )
+            await db.upsert_user(
+                conn.user.id,
+                conn.user.username or "",
+                conn.user.full_name or "",
+            )
         except Exception as e:
             log.warning(f"business owner save: {e}")
     except Exception:
@@ -68,6 +73,10 @@ async def cmd_start(msg: Message, state: FSMContext):
     if not await check_subscription(uid):
         await msg.answer(SUB_GATE_TEXT, reply_markup=sub_kb())
         return
+    try:
+        await db.mark_user_subscribed(uid, True)
+    except Exception:
+        pass
     await _show_home(uid, home_text_for(uid, name), kb_main(uid), msg)
 
 

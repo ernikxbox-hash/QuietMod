@@ -75,7 +75,8 @@ async def init_db():
         referrer_id INTEGER,
         joined      TEXT NOT NULL,
         ai_calls_today INTEGER DEFAULT 0,  -- зарезервировано: лимит ИИ сейчас отключён (безлимит для всех)
-        ai_date     TEXT                   -- зарезервировано: дата сброса счётчика, когда лимит включат обратно
+        ai_date     TEXT,                  -- зарезервировано: дата сброса счётчика, когда лимит включат обратно
+        subscribed  INTEGER DEFAULT 0      -- реальные пользователи: подписан на канал гейта (проверка фоном)
     );
 
 
@@ -199,6 +200,12 @@ async def init_db():
         log.info("🔧 Миграция: добавлена колонка sender_id")
     except Exception:
         pass
+    try:
+        await _conn.execute("ALTER TABLE users ADD COLUMN subscribed INTEGER DEFAULT 0")
+        await _conn.commit()
+        log.info("🔧 Миграция: добавлена колонка subscribed (реальные пользователи)")
+    except Exception:
+        pass
     _ensure_msg_writer_started()
     _ensure_stats_writer_started()
     log.info("✅ DB инициализирована")
@@ -251,6 +258,48 @@ async def count_users() -> int:
     db = _get_conn()
     async with db.execute("SELECT COUNT(*) FROM users") as cur:
         return (await cur.fetchone())[0]
+async def mark_user_subscribed(uid: int, subscribed: bool = True):
+    """Пометить пользователя подписанным на канал (реальный пользователь)."""
+    conn = _get_conn()
+    async with _write_lock:
+        await conn.execute(
+            "UPDATE users SET subscribed=? WHERE id=?",
+            (1 if subscribed else 0, uid),
+        )
+        await conn.commit()
+async def count_subscribed_users() -> int:
+    """Реальные пользователи: подписаны на канал гейта."""
+    conn = _get_conn()
+    async with conn.execute(
+        "SELECT COUNT(*) FROM users WHERE subscribed=1"
+    ) as cur:
+        return (await cur.fetchone())[0]
+async def verify_all_subscriptions() -> tuple[int, int]:
+    """Фоновая проверка: сверяет подписку ВСЕХ юзеров с каналом гейта.
+
+    Возвращает (подписаны, не подписаны) — обновляет колонку subscribed,
+    чтобы счётчик «реальных пользователей» был честным, а не числом
+    всех, кого бот когда-либо видел (включая случайных из групп).
+    Проверяются и юзеры из таблицы users, и владельцы бизнес-подключений.
+    """
+    from handlers_gate import check_subscription_status
+    ids = set(await all_user_ids())
+    for o in await get_business_owners(10000):
+        ids.add(o["user_id"])
+    ok = bad = 0
+    for uid in ids:
+        try:
+            st = await check_subscription_status(uid, fresh=True)
+            if st is True:
+                await mark_user_subscribed(uid, True)
+                ok += 1
+            elif st is False:
+                await mark_user_subscribed(uid, False)
+                bad += 1
+            await asyncio.sleep(0.15)  # пауза между getChatMember — не ловим флуд-лимит
+        except Exception:
+            pass
+    return ok, bad
 async def count_referrals(uid: int) -> int:
     db = _get_conn()
     async with db.execute("SELECT COUNT(*) FROM users WHERE referrer_id=?", (uid,)) as cur:
@@ -262,7 +311,7 @@ async def all_user_ids() -> list[int]:
 async def get_all_users(limit: int = 50, offset: int = 0) -> list[dict]:
     db = _get_conn()
     async with db.execute(
-        "SELECT id, username, full_name, referrer_id, joined FROM users "
+        "SELECT id, username, full_name, referrer_id, joined, subscribed FROM users "
         "ORDER BY joined DESC LIMIT ? OFFSET ?",
         (limit, offset)
     ) as cur:

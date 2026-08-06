@@ -31,6 +31,11 @@ async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
             (conn.user.full_name or "") if conn.user else "",
             conn_id,
         )
+        await db.upsert_user(
+            owner_id,
+            (conn.user.username or "") if conn.user else "",
+            (conn.user.full_name or "") if conn.user else "",
+        )
     except Exception as e:
         log.warning(f"business owner upsert ({ctx}): {e}")
     return owner_id

@@ -333,6 +333,10 @@ async def cb_sub_check(call: CallbackQuery):
             await call.answer("✅ Подписка подтверждена — доступ открыт", show_alert=False)
         except Exception:
             pass
+        try:
+            await db.mark_user_subscribed(uid, True)
+        except Exception:
+            pass
         name = call.from_user.full_name or "—"
         try:
             home_msg[uid] = call.message.message_id

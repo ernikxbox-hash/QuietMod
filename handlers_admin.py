@@ -88,17 +88,19 @@ async def _render_dashboard() -> str:
         db.count_ideas(),
         db.count_bot_chats(),
         db.count_business_owners(),
+        db.count_subscribed_users(),
         *[db.count_stats("launch", _stat_since(d)) for d in range(7)],
     )
     (users, users24, msgs, msgs24,
      l_today, l_week, l_all,
      del_all, del_today, ed_all, ed_today,
-     whisper, stars, ideas, chats, biz) = results[:16]
-    day_counts = results[16:]
+     whisper, stars, ideas, chats, biz, real) = results[:17]
+    day_counts = results[17:]
     lines = [
         "◆ <b>ДАШБОРД</b> · Quiet Mod 👁️",
         f"<code>{LINE}</code>",
-        f"◇ Пользователи:  <b>{users}</b>  (+{users24} за 24ч)",
+        f"◇ Реальные:     <b>{real}</b>  (подписаны на канал)",
+        f"◇ В базе:        <b>{users}</b>  (+{users24} за 24ч)",
         f"◇ Бизнес:        <b>{biz}</b>  подключений",
         f"◇ Сообщений:     <b>{msgs}</b>  (+{msgs24} за 24ч)",
         f"◇ Запуски:        сегодня <b>{l_today}</b> · 7д <b>{l_week}</b> · всего <b>{l_all}</b>",
@@ -304,7 +306,8 @@ def _fmt_user_line(u: dict) -> str:
         source = f"⟡ по приглашению (от ID {u['referrer_id']})"
     else:
         source = "◇ по юзернейму / прямой запуск"
-    return f"<b>{html_escape(uname)}</b>  (ID {u['id']})\n   {source}"
+    sub = "◆ подписан" if u.get("subscribed") else "◇ не подписан"
+    return f"<b>{html_escape(uname)}</b>  (ID {u['id']})\n   {source} · {sub}"
 
 
 async def _render_users_page(page: int) -> tuple[str, InlineKeyboardMarkup]:
@@ -406,6 +409,9 @@ async def on_adm_search(msg: Message, state: FSMContext):
         uname = html_escape(f"@{u['username']}" if u.get("username") else "—")
         lines.append(f"◇ Username: {uname}")
         lines.append(f"◇ Имя: {html_escape(u.get('full_name') or '—')}")
+        lines.append(
+            "◇ Подписка: " + ("<b>подписан</b> на канал" if u.get("subscribed") else "<b>НЕ подписан</b>")
+        )
         try:
             joined = datetime.fromisoformat(u["joined"]).astimezone(MSK).strftime("%d.%m.%Y · %H:%M")
             lines.append(f"◇ Присоединился: {joined}")
