@@ -67,7 +67,9 @@ def _save_ffmpeg() -> str:
 def _save_extract_url(text: str) -> Optional[str]:
     """Первая ссылка в тексте, ведущая на разрешённый домен."""
     for m in _SAVE_URL_RE.finditer(text or ""):
-        url = m.group(0).rstrip(".,;:!?)]}"'")        host = (urlparse(url).hostname or "").lower()
+        url = m.group(0).rstrip(".,;:!?)]}")
+        url = url.rstrip("'\"")
+        host = (urlparse(url).hostname or "").lower()
         if any(host == d or host.endswith("." + d) for d in _SAVE_ALLOWED_HOSTS):
             return url
     return None
