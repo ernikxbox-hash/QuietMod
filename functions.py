@@ -767,12 +767,23 @@ def kb_admin() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="← В меню",      callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (
-    "Ты сдержанный, элегантный ИИ-консьерж внутри Telegram-бота Quiet Mod. "
-    "Отвечай чётко, без лишней воды. Язык — язык пользователя. "
+    "Ты — лучший ИИ-помощник в Telegram: умный, быстрый, чёткий, дружелюбный. "
+    "Твои ответы читают как экспертное мнение: сразу суть, без воды. "
+    "Язык — язык пользователя. "
     "СТРОГО: весь ответ должен быть на ОДНОМ языке — языке вопроса пользователя. "
-    "Никогда не вставляй слова или фразы на других языках (вьетнамский, китайский и т.п.), "
+    "Никогда не вставляй слова или фразы на других языках, "
     "даже одно слово — это критическая ошибка.\n\n"
-    "Будь дружелюбным и полезным, держи стиль лаконичного люкса.\n\n"
+    "СТРУКТУРА ОТВЕТА (главное правило — суть сразу):\n"
+    "— Простой вопрос («привет», «сколько будет 2+2») — 1–3 предложения, без раздувания.\n"
+    "— Средний вопрос — 2–4 абзаца: прямой ответ в первом предложении, потом аргументы или шаги, в конце итог.\n"
+    "— Сложный вопрос — короткие разделы: «Суть», «Как это работает», «Итог», по 2–4 строки каждый.\n"
+    "— Расчёты и решения — кратко, по шагам, с итоговым ответом в конце.\n"
+    "— Ключевые числа, выводы и термины выделяй <b>жирным</b>.\n\n"
+    "КАЧЕСТВО ОТВЕТА:\n"
+    "— Никакой воды: без «как языковая модель», без «надеюсь, я помог», без повторов вопроса, без рекламы.\n"
+    "— Каждое предложение добавляет ценность. Если можно короче — короче.\n"
+    "— Не выдумывай факты и числа. Не знаешь — честно скажи и подскажи, где проверить.\n"
+    "— Тон — уверенный и дружелюбный, без канцелярита и без панибратства.\n\n"
     "ВАЖНО — ФОРМАТИРОВАНИЕ:\n"
     "— НИКОГДА не используй Markdown: никаких **, *, ##, ###, $$, \\(...\\), \\[...\\], _, ` и прочих символов разметки.\n"
     "— Пиши обычным текстом. Для выделения используй ТОЛЬКО Telegram HTML-теги: <b>жирный</b>, <i>курсив</i>.\n"
@@ -1459,7 +1470,7 @@ def _sanitize_text_messages(messages: list) -> list:
     return out
 
 
-async def _groq_request(messages: list, max_tokens: int = 2048, temperature: float = 0.7, model: str = GROQ_MODEL) -> Optional[str]:
+async def _groq_request(messages: list, max_tokens: int = 2048, temperature: float = 0.6, model: str = GROQ_MODEL) -> Optional[str]:
     """Отправка запроса в Groq с фолбэком между API-ключами.
 
     Если ключ не отвечает (лимит токенов, ошибка, таймаут) — бот
@@ -1805,6 +1816,23 @@ def _clean_ai_latex(text: str) -> str:
     return t.strip()
 
 
+def _md_emphasis_to_html(text: str) -> str:
+    '''Страховка от Markdown-привычек модели: **жирный** → <b>жирный</b>.'''
+    if not text:
+        return text
+    code: list[str] = []
+
+    def _hide(m: re.Match) -> str:
+        code.append(m.group(0))
+        return f'⟦QM{len(code) - 1}⟧'
+
+    t = re.sub(r'<pre>.*?</pre>|<code>.*?</code>', _hide, text, flags=re.S)
+    t = re.sub(r'\*\*([^*\n]+)\*\*', r'<b>\1</b>', t)
+    for i, b in enumerate(code):
+        t = t.replace(f'⟦QM{i}⟧', b)
+    return t
+
+
 def _strip_think_blocks(text: str) -> str:
     """Вырезает reasoning-блоки <think>...</think> из ответа модели.
 
@@ -1897,7 +1925,7 @@ async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
             [],
         )
     reply, files = _parse_code_files(reply)
-    reply = _clean_ai_latex(_normalize_code_blocks(reply))
+    reply = _md_emphasis_to_html(_clean_ai_latex(_normalize_code_blocks(reply)))
     if already_searched:
         reply += "\n\n◐ <i>ответ дополнен поиском</i>"
     if not already_searched and _needs_search(reply, user_msg):
@@ -1922,7 +1950,7 @@ async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
                 reply_with_search = _strip_think_blocks(reply_with_search)
                 reply_with_search, extra_files = _parse_code_files(reply_with_search)
                 files += extra_files
-                reply = _clean_ai_latex(_normalize_code_blocks(reply_with_search)) + "\n\n◐ <i>ответ дополнен поиском</i>"
+                reply = _md_emphasis_to_html(_clean_ai_latex(_normalize_code_blocks(reply_with_search))) + "\n\n◐ <i>ответ дополнен поиском</i>"
                 log.info(f"🔍 Search augmented reply for uid={uid}")
     if is_death and _reply_claims_alive(reply):
         log.info(f"⚰️ Death-check verify uid={uid}: {user_msg[:60]}")
@@ -1949,7 +1977,7 @@ async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
                 v_reply = _strip_think_blocks(v_reply)
                 v_reply, extra_files = _parse_code_files(v_reply)
                 files += extra_files
-                reply = _clean_ai_latex(_normalize_code_blocks(v_reply)) + "\n\n◐ <i>перепроверено по свежим данным</i>"
+                reply = _md_emphasis_to_html(_clean_ai_latex(_normalize_code_blocks(v_reply))) + "\n\n◐ <i>перепроверено по свежим данным</i>"
                 log.info(f"⚰️ Death-check corrected uid={uid}")
     ai_history[uid].append({"role": "assistant", "content": reply})
     return reply, files
