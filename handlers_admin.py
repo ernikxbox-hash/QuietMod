@@ -756,28 +756,27 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
 
 
 def cmd_catalog_text() -> str:
-    """Каталог команд: 4 категории с премиум-эмодзи (пак CPT_Emoji), белый стиль.
+    """Каталог команд: 4 категории, белый стиль (◆ ◇, без цветных эмодзи).
 
-    <tg-emoji emoji-id="..."> — кастомный эмодзи в тексте (единственный тег,
-    который принимает Bot API): премиум-пользователи видят эмодзи, остальным
-    показывается фолбэк-символ. Иконки на кнопках «Подробнее» (kb_cmd) видят
-    только премиум-пользователи.
+    Премиум-эмодзи (пак CPT_Emoji) стоят на КНОПКАХ функций — kb_cmd() и
+    kb_cmd_main() (icon_custom_emoji_id). В ТЕКСТ кастомный эмодзи вставить
+    нельзя: фолбэк внутри тега <tg-emoji> обязан быть настоящим эмодзи, иначе
+    Telegram возвращает ENTITY_TEXT_INVALID и сообщение не отправляется вовсе.
     """
-    e = f'<tg-emoji emoji-id="{CUSTOM_EMOJI_CMD}">'
     return (
-        f"◆ <b>QUIET MOD</b> {e}👁️</tg-emoji> — все команды\n"
+        "◆ <b>QUIET MOD</b> 👁️ — все команды\n"
         f"<code>{LINE}</code>\n\n"
-        f"{e}▣</tg-emoji> <b>МЕДИА</b> — из фото и видео\n"
+        "▣ <b>МЕДИА</b> — из фото и видео\n"
         "<code>.stik</code> стикер · <code>.krom</code> кружок · <code>.gif</code> гифка\n"
         "<code>.ramka</code> рамка · <code>.wm</code> знак · <code>.voice</code> озвучка\n"
         "<code>.шрифт</code> стили текста\n\n"
-        f"{e}✧</tg-emoji> <b>ИИ И ИНФО</b>\n"
+        "✧ <b>ИИ И ИНФО</b>\n"
         "<code>.ai</code> ИИ-помощник · <code>.info</code> карточка · <code>.price</code> цена ника\n"
         "<code>.curs</code> курсы валют · <code>.sled</code> слежка за профилем\n\n"
-        f"{e}◈</tg-emoji> <b>ЛИЧНЫЙ ЧАТ</b> — защита\n"
+        "◈ <b>ЛИЧНЫЙ ЧАТ</b> — защита\n"
         "<code>.mute</code> · <code>.nomute</code> · <code>.afk</code> · <code>.code</code>\n"
         "<code>.wbl</code> · <code>.black</code> · <code>.spam</code>\n\n"
-        f"{e}◇</tg-emoji> <b>ТЕКСТ И ИГРЫ</b>\n"
+        "◇ <b>ТЕКСТ И ИГРЫ</b>\n"
         "<code>.bold</code> · <code>.italic</code> · <code>.mono</code> · <code>.line</code>\n"
         "<code>.crossed</code> · <code>.hidden</code> · <code>.quote</code> · <code>.knb</code>\n"
         "<code>.level</code> · <code>.who</code>\n\n"
@@ -787,9 +786,17 @@ def cmd_catalog_text() -> str:
 
 
 def kb_cmd_main() -> InlineKeyboardMarkup:
-    """Кнопки под каталогом: подробный разбор по кнопке, закрыть — тут же."""
+    """Кнопки под каталогом: подробный разбор по кнопке, закрыть — тут же.
+
+    Премиум-эмодзи (пак CPT_Emoji) — иконка на кнопке «Подробнее»:
+    видят премиум-пользователи, остальным — просто текст кнопки.
+    """
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◆ Подробнее", callback_data="cmd_menu"),
+        [InlineKeyboardButton(
+            text="◆ Подробнее",
+            callback_data="cmd_menu",
+            icon_custom_emoji_id=CUSTOM_EMOJI_CMD or None,
+        ),
          InlineKeyboardButton(text="✕ Закрыть", callback_data="cmd_close")],
     ])
 
