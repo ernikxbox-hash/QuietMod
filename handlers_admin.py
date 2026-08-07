@@ -758,25 +758,26 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
 def cmd_catalog_text() -> str:
     """Каталог команд: 4 категории с премиум-эмодзи (пак CPT_Emoji), белый стиль.
 
-    <emoji id="..."> — кастомный эмодзи в тексте: его видят все пользователи
-    (фолбэк-символ — только для клиентов без поддержки). Иконки на кнопках
-    «Подробнее» (kb_cmd) видят только премиум-пользователи.
+    <tg-emoji emoji-id="..."> — кастомный эмодзи в тексте (единственный тег,
+    который принимает Bot API): премиум-пользователи видят эмодзи, остальным
+    показывается фолбэк-символ. Иконки на кнопках «Подробнее» (kb_cmd) видят
+    только премиум-пользователи.
     """
-    e = f'<emoji id="{CUSTOM_EMOJI_CMD}">'
+    e = f'<tg-emoji emoji-id="{CUSTOM_EMOJI_CMD}">'
     return (
-        f"◆ <b>QUIET MOD</b> {e}👁️</emoji> — все команды\n"
+        f"◆ <b>QUIET MOD</b> {e}👁️</tg-emoji> — все команды\n"
         f"<code>{LINE}</code>\n\n"
-        f"{e}▣</emoji> <b>МЕДИА</b> — из фото и видео\n"
+        f"{e}▣</tg-emoji> <b>МЕДИА</b> — из фото и видео\n"
         "<code>.stik</code> стикер · <code>.krom</code> кружок · <code>.gif</code> гифка\n"
         "<code>.ramka</code> рамка · <code>.wm</code> знак · <code>.voice</code> озвучка\n"
         "<code>.шрифт</code> стили текста\n\n"
-        f"{e}✧</emoji> <b>ИИ И ИНФО</b>\n"
+        f"{e}✧</tg-emoji> <b>ИИ И ИНФО</b>\n"
         "<code>.ai</code> ИИ-помощник · <code>.info</code> карточка · <code>.price</code> цена ника\n"
         "<code>.curs</code> курсы валют · <code>.sled</code> слежка за профилем\n\n"
-        f"{e}◈</emoji> <b>ЛИЧНЫЙ ЧАТ</b> — защита\n"
+        f"{e}◈</tg-emoji> <b>ЛИЧНЫЙ ЧАТ</b> — защита\n"
         "<code>.mute</code> · <code>.nomute</code> · <code>.afk</code> · <code>.code</code>\n"
         "<code>.wbl</code> · <code>.black</code> · <code>.spam</code>\n\n"
-        f"{e}◇</emoji> <b>ТЕКСТ И ИГРЫ</b>\n"
+        f"{e}◇</tg-emoji> <b>ТЕКСТ И ИГРЫ</b>\n"
         "<code>.bold</code> · <code>.italic</code> · <code>.mono</code> · <code>.line</code>\n"
         "<code>.crossed</code> · <code>.hidden</code> · <code>.quote</code> · <code>.knb</code>\n"
         "<code>.level</code> · <code>.who</code>\n\n"
