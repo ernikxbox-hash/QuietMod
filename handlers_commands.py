@@ -107,6 +107,9 @@ async def on_spam_inline(msg: Message):
     if count <= 0:
         await _business_edit_message(msg.business_connection_id, msg.chat.id, msg.message_id, "◇ Количество должно быть > 0")
         return
+    clamped = count > 99
+    if clamped:
+        count = 99
     existing = business_spam_tasks.get(key)
     if existing and not existing.done():
         stop_kb = {"inline_keyboard": [[{"text": "⛔ Остановить спам", "callback_data": "spam_stop_btn"}]]}
@@ -128,12 +131,14 @@ async def on_spam_inline(msg: Message):
         _business_spam_worker(msg.business_connection_id, msg.chat.id, owner_id, text_part, count)
     )
     spam_kb = {"inline_keyboard": [[{"text": "⛔ Остановить спам", "callback_data": "spam_stop_btn"}]]}
+    limit_line = "◇ Лимит: <b>99</b> сообщений за раз\n" if clamped else ""
     await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
         (
             "🔊 <b>СПАМ ЗАПУЩЕН</b>\n"
             f"<code>{LINE}</code>\n\n"
             f"◇ Отправляю: <b>{count}</b> сообщений\n"
+            f"{limit_line}"
             f"◇ Текст: <i>{html_escape(text_part[:80])}</i>\n\n"
             f"<code>{LINE}</code>\n"
             "◇ Остановить: кнопка ниже 👇\n"
@@ -1601,9 +1606,13 @@ async def on_spam(msg: Message):
     if count <= 0:
         await msg.answer("◇ Количество должно быть > 0", parse_mode=None)
         return
+    clamped = count > 99
+    if clamped:
+        count = 99
     existing = spam_tasks.get(key)
     if existing and not existing.done():
         await msg.answer("◇ Спам уже идёт. Остановить: .spam stop", parse_mode=None)
         return
     spam_tasks[key] = asyncio.create_task(_spam_worker(msg.chat.id, uid, text_part, count))
-    await msg.answer(f"◇ Запустил спам: {count}", parse_mode=None)
+    limit_note = " · лимит 99" if clamped else ""
+    await msg.answer(f"◇ Запустил спам: {count}{limit_note}", parse_mode=None)

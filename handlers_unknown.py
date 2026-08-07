@@ -25,7 +25,7 @@ from core import dp, log
 _KNOWN_NAMES = {
     "ai", "spam", "price", "curs", "mute", "unmute", "nomute", "unnomute",
     "afk", "unafk", "code", "uncode", "wbl", "unwbl", "black", "unblack",
-    "cmd", "knb", "level", "unlevel", "who", "ramka", "stik", "krom",
+    "cmd", "help", "knb", "level", "unlevel", "who", "ramka", "stik", "krom",
     "voice", "wm", "gif", "шрифт", "info", "sled", "unsled", "infosled",
     "bold", "italic", "mono", "line", "crossed", "hidden", "quote",
 }

@@ -432,6 +432,7 @@ CUSTOM_EMOJI_ARCHIVE   = "5346267671065281783"  # Архив
 CUSTOM_EMOJI_SAVED     = "5348178055338671586"  # Сохранённые
 CUSTOM_EMOJI_CLEAR     = "5345809410939700735"  # Очистить
 CUSTOM_EMOJI_ADMIN     = "5348129380474306311"  # Admin Suite
+CUSTOM_EMOJI_CMD       = "5348129380474306311"  # премиум-эмодзи каталога .cmd (пак CPT_Emoji): иконка к каждой функции
 
 
 def kb_main(uid: int) -> InlineKeyboardMarkup:
@@ -547,7 +548,7 @@ CMD_FEATURES: dict[str, dict] = {
         "desc": "Отправляет N одинаковых сообщений в чат.",
         "usage": ".spam текст число",
         "example": ".spam Привет 10",
-        "note": ".spam stop — остановить"
+        "note": ".spam stop — остановить · максимум 99 сообщений за раз"
     },
     "mute": {
         "title": "◇ .mute",
@@ -746,7 +747,11 @@ def kb_cmd() -> InlineKeyboardMarkup:
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]
-        row = [InlineKeyboardButton(text=CMD_FEATURES[k]["title"], callback_data=f"cmd_info_{k}") for k in pair]
+        row = [InlineKeyboardButton(
+            text=CMD_FEATURES[k]["title"],
+            callback_data=f"cmd_info_{k}",
+            icon_custom_emoji_id=CUSTOM_EMOJI_CMD or None,
+        ) for k in pair]
         rows.append(row)
     rows.append([InlineKeyboardButton(text="✕ Закрыть", callback_data="cmd_close")])
     return InlineKeyboardMarkup(inline_keyboard=rows)

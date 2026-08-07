@@ -33,6 +33,7 @@ from handlers_gate import _resolve_channel, check_subscription_status, set_chann
 from functions import (
     LINE,
     CMD_FEATURES,
+    CUSTOM_EMOJI_CMD,
     MSK,
     _edit_ai_html,
     kb_admin,
@@ -754,25 +755,71 @@ async def cb_adm_broadcast_groups(call: CallbackQuery, state: FSMContext):
     )
 
 
-@dp.message(F.text.regexp(r"(?i)^\.cmd$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
-async def on_cmd(msg: Message):
-    await msg.answer(
-        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n<code>{LINE}</code>\n\n"
-        "Выбери команду:",
-        reply_markup=kb_cmd(),
+def cmd_catalog_text() -> str:
+    """Каталог команд: 4 категории с премиум-эмодзи (пак CPT_Emoji), белый стиль.
+
+    <emoji id="..."> — кастомный эмодзи в тексте: его видят все пользователи
+    (фолбэк-символ — только для клиентов без поддержки). Иконки на кнопках
+    «Подробнее» (kb_cmd) видят только премиум-пользователи.
+    """
+    e = f'<emoji id="{CUSTOM_EMOJI_CMD}">'
+    return (
+        f"◆ <b>QUIET MOD</b> {e}👁️</emoji> — все команды\n"
+        f"<code>{LINE}</code>\n\n"
+        f"{e}▣</emoji> <b>МЕДИА</b> — из фото и видео\n"
+        "<code>.stik</code> стикер · <code>.krom</code> кружок · <code>.gif</code> гифка\n"
+        "<code>.ramka</code> рамка · <code>.wm</code> знак · <code>.voice</code> озвучка\n"
+        "<code>.шрифт</code> стили текста\n\n"
+        f"{e}✧</emoji> <b>ИИ И ИНФО</b>\n"
+        "<code>.ai</code> ИИ-помощник · <code>.info</code> карточка · <code>.price</code> цена ника\n"
+        "<code>.curs</code> курсы валют · <code>.sled</code> слежка за профилем\n\n"
+        f"{e}◈</emoji> <b>ЛИЧНЫЙ ЧАТ</b> — защита\n"
+        "<code>.mute</code> · <code>.nomute</code> · <code>.afk</code> · <code>.code</code>\n"
+        "<code>.wbl</code> · <code>.black</code> · <code>.spam</code>\n\n"
+        f"{e}◇</emoji> <b>ТЕКСТ И ИГРЫ</b>\n"
+        "<code>.bold</code> · <code>.italic</code> · <code>.mono</code> · <code>.line</code>\n"
+        "<code>.crossed</code> · <code>.hidden</code> · <code>.quote</code> · <code>.knb</code>\n"
+        "<code>.level</code> · <code>.who</code>\n\n"
+        f"<code>{LINE}</code>\n"
+        "◇ <b>Подробнее о каждой команде</b> — кнопка ниже 👇"
     )
 
 
-@dp.business_message(F.text.regexp(r"(?i)^\.cmd$"))
+def kb_cmd_main() -> InlineKeyboardMarkup:
+    """Кнопки под каталогом: подробный разбор по кнопке, закрыть — тут же."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◆ Подробнее", callback_data="cmd_menu"),
+         InlineKeyboardButton(text="✕ Закрыть", callback_data="cmd_close")],
+    ])
+
+
+@dp.message(F.text.regexp(r"(?i)^(?:\.cmd|\.help)$"), F.chat.type.in_({"private", "group", "supergroup", "channel"}))
+async def on_cmd(msg: Message):
+    await msg.answer(cmd_catalog_text(), reply_markup=kb_cmd_main())
+
+
+@dp.business_message(F.text.regexp(r"(?i)^(?:\.cmd|\.help)$"))
 async def on_cmd_business(msg: Message):
     await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
-        f"◆ <b>QUIET MOD</b> 👁️ — список команд"
+        "◆ <b>QUIET MOD</b> 👁️ — все команды",
     )
     await _business_send_message_ex(
         msg.business_connection_id, msg.chat.id,
-        f"◆ <b>QUIET MOD</b> 👁️ — список команд\n<code>{LINE}</code>\n\n"
-        "Выбери команду:"
+        cmd_catalog_text(),
+        reply_markup=kb_cmd_main().model_dump(exclude_none=True),
+    )
+
+
+@dp.callback_query(F.data == "cmd_menu")
+async def cb_cmd_menu(call: CallbackQuery):
+    """Кнопка «Подробнее»: полный разбор каждой команды (описание/пример)."""
+    await call.answer()
+    await call.message.edit_text(
+        f"◆ <b>QUIET MOD</b> 👁️ — подробнее\n<code>{LINE}</code>\n\n"
+        "Выбери функцию — покажу описание,\n"
+        "как использовать и пример:",
+        reply_markup=kb_cmd(),
     )
 
 
@@ -800,11 +847,7 @@ async def cb_cmd_info(call: CallbackQuery):
 @dp.callback_query(F.data == "cmd_back")
 async def cb_cmd_back(call: CallbackQuery):
     await call.answer()
-    await call.message.edit_text(
-        f"◆ <b>QUIET MOD</b> 👁️ — список функций\n<code>{LINE}</code>\n\n"
-        "Выбери интересующую функцию:",
-        reply_markup=kb_cmd(),
-    )
+    await call.message.edit_text(cmd_catalog_text(), reply_markup=kb_cmd_main())
 
 
 @dp.callback_query(F.data == "cmd_close")
