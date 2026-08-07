@@ -776,7 +776,8 @@ SYSTEM_PROMPT = (
     "ВАЖНО — ФОРМАТИРОВАНИЕ:\n"
     "— НИКОГДА не используй Markdown: никаких **, *, ##, ###, $$, \\(...\\), \\[...\\], _, ` и прочих символов разметки.\n"
     "— Пиши обычным текстом. Для выделения используй ТОЛЬКО Telegram HTML-теги: <b>жирный</b>, <i>курсив</i>.\n"
-    "— Математические формулы пиши в читаемом виде, например: sqrt(x^2 + 4) + sqrt(x^2 + 1) = 3 - 5x^2\n"
+    "— Математику пиши ТОЛЬКО плоским текстом — Telegram НЕ рендерит LaTeX. Запрещено: окружать формулы в круглые или квадратные скобки с обратным слэшем, ставить знак $ вокруг формул, писать команды frac, sqrt, displaystyle, left/right.\n"
+    "— Степень — через ^ (x^2, не x^{2}), индекс — через _ (x_1), корень — sqrt(...) или √(...), дробь — a/b со скобками. Пример: x_1,2 = (-b ± sqrt(b^2 - 4ac)) / (2a)\n"
     "— Списки оформляй через дефис или цифру с точкой, без Markdown-маркеров.\n"
     "— Если тебе дали результаты поиска, а они противоречат твоим знаниям — ВСЕГДА доверяй поиску: твои знания могли устареть (например, человек мог недавно умереть, курс измениться, выйти новая версия). Не спорь с поиском и не отвечай по памяти, если есть свежие данные.\n"
     "— Никаких LaTeX, никаких $...$ или $$...$$.\n\n"
@@ -1657,6 +1658,153 @@ async def _send_code_files(chat_id: int, files: list[dict], business_connection_
         except Exception as e:
             log.warning(f"send document {name}: {e}")
 
+# ─── Чистка LaTeX из ответов ИИ ─────────────────────────────────────────
+_LATEX_TOKENS: dict[str, str] = {
+    # стрелки
+    'to': '→', 'rightarrow': '→', 'longrightarrow': '→', 'mapsto': '↦',
+    'Rightarrow': '⟹', 'Longrightarrow': '⟹', 'implies': '⟹', 'iff': '⇔',
+    'Leftrightarrow': '⇔', 'leftarrow': '←', 'longleftarrow': '←',
+    'uparrow': '↑', 'downarrow': '↓', 'leftrightarrow': '↔',
+    # операции
+    'cdot': '·', 'cdots': '…', 'ldots': '…', 'dots': '…', 'dotsb': '…', 'dotsc': '…',
+    'times': '×', 'div': '÷', 'pm': '±', 'mp': '∓', 'ast': '*', 'star': '*',
+    'circ': '°', 'bullet': '•', 'prime': '′', 'degree': '°', 'colon': ':',
+    # отношения
+    'le': '≤', 'leq': '≤', 'leqslant': '≤', 'ge': '≥', 'geq': '≥', 'geqslant': '≥',
+    'ne': '≠', 'neq': '≠', 'approx': '≈', 'simeq': '≈', 'cong': '≈', 'equiv': '≡',
+    'sim': '~', 'propto': '∝', 'asymp': '≈', 'lt': '<', 'gt': '>',
+    'mid': '|', 'vert': '|', 'Vert': '‖', 'parallel': '∥', 'perp': '⊥',
+    # множества и логика
+    'in': '∈', 'notin': '∉', 'ni': '∋', 'subset': '⊂', 'supset': '⊃',
+    'subseteq': '⊆', 'supseteq': '⊇', 'cup': '∪', 'cap': '∩',
+    'emptyset': '∅', 'varnothing': '∅', 'setminus': '\\',
+    'forall': '∀', 'exists': '∃', 'nexists': '∄', 'land': '∧', 'lor': '∨', 'neg': '¬',
+    # анализ
+    'sum': '∑', 'prod': '∏', 'int': '∫', 'oint': '∮',
+    'partial': '∂', 'nabla': '∇', 'infty': '∞',
+    # греческий алфавит
+    'alpha': 'α', 'beta': 'β', 'gamma': 'γ', 'delta': 'δ', 'epsilon': 'ε',
+    'varepsilon': 'ε', 'zeta': 'ζ', 'eta': 'η', 'theta': 'θ', 'vartheta': 'ϑ',
+    'iota': 'ι', 'kappa': 'κ', 'lambda': 'λ', 'mu': 'μ', 'nu': 'ν',
+    'xi': 'ξ', 'pi': 'π', 'varpi': 'ϖ', 'rho': 'ρ', 'varrho': 'ϱ',
+    'sigma': 'σ', 'varsigma': 'ς', 'tau': 'τ', 'upsilon': 'υ', 'phi': 'φ',
+    'varphi': 'ϕ', 'chi': 'χ', 'psi': 'ψ', 'omega': 'ω',
+    'Gamma': 'Γ', 'Delta': 'Δ', 'Theta': 'Θ', 'Lambda': 'Λ', 'Xi': 'Ξ',
+    'Pi': 'Π', 'Sigma': 'Σ', 'Upsilon': 'Υ', 'Phi': 'Φ', 'Psi': 'Ψ', 'Omega': 'Ω',
+    'Re': 'ℜ', 'Im': 'ℑ', 'aleph': 'ℵ', 'hbar': 'ℏ', 'ell': 'ℓ',
+    # функции — просто снимаем слэш
+    'max': 'max', 'min': 'min', 'lim': 'lim', 'log': 'log', 'ln': 'ln', 'exp': 'exp',
+    'sin': 'sin', 'cos': 'cos', 'tan': 'tan', 'cot': 'cot', 'sec': 'sec', 'csc': 'csc',
+    'arcsin': 'arcsin', 'arccos': 'arccos', 'arctan': 'arctan', 'det': 'det',
+    'dim': 'dim', 'ker': 'ker', 'deg': 'deg', 'mod': 'mod', 'bmod': 'mod',
+    'pmod': 'mod', 'gcd': 'gcd', 'arg': 'arg', 'sup': 'sup', 'inf': 'inf',
+    # декорации-пустышки — убираем целиком
+    'left': '', 'right': '', 'big': '', 'Big': '', 'bigg': '', 'Bigg': '',
+    'bigl': '', 'bigr': '', 'Bigl': '', 'Bigr': '', 'biggl': '', 'biggr': '',
+    'displaystyle': '', 'textstyle': '', 'scriptstyle': '', 'scriptscriptstyle': '',
+    'limits': '', 'nolimits': '', 'cr': '', 'hline': '', 'noalign': '',
+    # скобки
+    'langle': '⟨', 'rangle': '⟩', 'lbrace': '{', 'rbrace': '}',
+    'lbrack': '[', 'rbrack': ']',
+}
+
+_ACCENT_MARKS: dict[str, str] = {'bar': '\u0304', 'hat': '\u0302', 'vec': '\u20d7', 'dot': '\u0307', 'ddot': '\u0308'}
+_TEXT_GROUP_RE = re.compile(r'\\(?:text|textrm|mathrm|mathbf|mathit|mathbb|mathcal|mathfrak|textbf|textit|operatorname)\*?\s*\{([^{}]*)\}')
+_FRAC_RE = re.compile(r'\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}')
+_BINOM_RE = re.compile(r'\\binom\s*\{([^{}]*)\}\s*\{([^{}]*)\}')
+_OVERSET_RE = re.compile(r'\\(?:overset|underset|stackrel)\s*\{([^{}]*)\}\s*\{([^{}]*)\}')
+_SQRT_ROOT_RE = re.compile(r'\\sqrt\s*\[\s*([^{}\\]]+?)\s*\]\s*\{([^{}]*)\}')
+_SQRT_RE = re.compile(r'\\sqrt\s*\{([^{}]*)\}')
+_ACCENT_RE = re.compile(r'\\(bar|hat|vec|dot|ddot)\s*\{([^{}]*)\}')
+_OVERLINE_RE = re.compile(r'\\(?:overline|underline|overbrace|underbrace)\s*\{([^{}]*)\}')
+_SCRIPT_RE = re.compile(r'\^\{([^{}]*)\}|_\{([^{}]*)\}')
+_LATEX_TOKEN_RE = re.compile(r'\\([a-zA-Z]+)')
+
+
+def _clean_ai_latex(text: str) -> str:
+    '''Вычищает LaTeX-мусор из ответа ИИ — Telegram его не рендерит.
+
+    Модель иногда игнорирует запрет и шлёт \\(...\\), \\[...\\], \\frac{}{},
+    \\sqrt{}, \\displaystyle и т.п. Всё это превращается в плоский читаемый
+    текст: x^{2} → x^2, \\frac{a}{b} → (a)/(b), \\sqrt{x} → √(x).
+    Блоки кода (<pre>...</pre>, ```...```, <code>...</code>) защищены.
+    '''
+    if not text:
+        return text
+    # 1) Прячем код, чтобы замены его не задели
+    code_blocks: list[str] = []
+
+    def _hide(m: re.Match) -> str:
+        code_blocks.append(m.group(0))
+        return f'⟦QM{len(code_blocks) - 1}⟧'
+
+    t = re.sub(r'<pre>.*?</pre>|```.*?```|<code>.*?</code>', _hide, text, flags=re.S)
+    # 2) Блочные формулы \[...\] и $$...$$ → содержимое
+    t = re.sub(r'\\\[(.*?)\\\]', lambda m: m.group(1).strip(), t, flags=re.S)
+    t = re.sub(r'\$\$(.*?)\$\$', lambda m: m.group(1).strip(), t, flags=re.S)
+    # 3) Инлайн \(...\) → содержимое
+    t = re.sub(r'\\\((.*?)\\\)', lambda m: m.group(1).strip(), t, flags=re.S)
+    # 4) $...$ — только если внутри математика (иначе это валюта "$15")
+
+    def _inline_dollar(m: re.Match) -> str:
+        inner = m.group(1)
+        return inner.strip() if re.search(r'[\\^{}_√]', inner) else m.group(0)
+
+    t = re.sub(r'\$([^$\n]+)\$', _inline_dollar, t)
+    # 5) \text{...}, \mathbf{...}, \operatorname{...} → содержимое
+    t = _TEXT_GROUP_RE.sub(lambda m: m.group(1), t)
+    # 6) Окружения \begin{...}...\end{...} — снимаем обёртки
+    t = re.sub(r'\\begin\{[^}]*\}(\{[^}]*\})?', '', t)
+    t = re.sub(r'\\end\{[^}]*\}', '', t)
+    # 7) Дроби/корни/биномы/степени — циклом, чтобы свернуть вложения
+    for _ in range(50):
+        if not (_FRAC_RE.search(t) or _BINOM_RE.search(t) or _OVERSET_RE.search(t)
+                or _SQRT_ROOT_RE.search(t) or _SQRT_RE.search(t) or _SCRIPT_RE.search(t)):
+            break
+        t = _SQRT_ROOT_RE.sub(lambda m: f'√[{m.group(1).strip()}] ({m.group(2).strip()})', t)
+        t = _SQRT_RE.sub(lambda m: f'√({m.group(1).strip()})', t)
+        t = _FRAC_RE.sub(lambda m: f'({m.group(1).strip()})/({m.group(2).strip()})', t)
+        t = _BINOM_RE.sub(lambda m: f'C({m.group(1).strip()}, {m.group(2).strip()})', t)
+        t = _OVERSET_RE.sub(lambda m: m.group(2).strip(), t)
+        t = _SCRIPT_RE.sub(lambda m: ('^' if m.group(1) is not None else '_') + (m.group(1) or m.group(2)), t)
+    # 8) Акценты: \bar{x} → x̄, \hat{x} → x̂, \vec{v} → v⃗
+
+    def _accent(m: re.Match) -> str:
+        mark = _ACCENT_MARKS.get(m.group(1), '')
+        return ''.join(ch + mark for ch in m.group(2))
+
+    t = _ACCENT_RE.sub(_accent, t)
+    # 9) \overline{AB} → A̅B̅, \underline{AB} → A̲B̲
+
+    def _overline(m: re.Match) -> str:
+        mark = '\u0305' if m.group(0).startswith('\\overline') else '\u0332'
+        return ''.join(ch + mark for ch in m.group(1))
+
+    t = _OVERLINE_RE.sub(_overline, t)
+    # 10) Перенос строки \, затем известные команды → символы
+    t = t.replace(r'\\', '\n')
+    t = t.replace(r'\newline', '\n')
+    t = t.replace(r'\,', ' ').replace(r'\;', ' ').replace(r'\:', ' ').replace(r'\!', '')
+    t = t.replace('\\ ', ' ')
+    t = _LATEX_TOKEN_RE.sub(lambda m: _LATEX_TOKENS.get(m.group(1), m.group(1)), t)
+    # 11) Экранированные спецсимволы: \{ → {, \% → % ...
+    t = re.sub(r'\\([{}%&#_$*+=@])', r'\1', t)
+    # 11а) Осиротевшие слэши (незакрытые \(, \[ и т.п.) — убираем
+    t = re.sub(r'\\([^a-zA-Z0-9]|$)', r'\1', t)
+    # 12) Одиночные скобки-обёртки {x} → x
+    t = re.sub(r'\{([^{}\s]+)\}', r'\1', t)
+    # 13) Выравнивание в матрицах: & → пробел (но не HTML-сущности &amp;)
+    t = re.sub(r'&(?!\w+;|#\d+;)', ' ', t)
+    # 14) Приводим в порядок пробелы и пустые строки
+    t = re.sub(r'[ \t]{2,}', ' ', t)
+    t = re.sub(r'\n{3,}', '\n\n', t)
+    t = re.sub(r' +([.,;:!?])', r'\1', t)
+    # 15) Возвращаем код на место
+    for i, block in enumerate(code_blocks):
+        t = t.replace(f'⟦QM{i}⟧', block)
+    return t.strip()
+
+
 def _strip_think_blocks(text: str) -> str:
     """Вырезает reasoning-блоки <think>...</think> из ответа модели.
 
@@ -1749,7 +1897,7 @@ async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
             [],
         )
     reply, files = _parse_code_files(reply)
-    reply = _normalize_code_blocks(reply)
+    reply = _clean_ai_latex(_normalize_code_blocks(reply))
     if already_searched:
         reply += "\n\n◐ <i>ответ дополнен поиском</i>"
     if not already_searched and _needs_search(reply, user_msg):
@@ -1774,7 +1922,7 @@ async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
                 reply_with_search = _strip_think_blocks(reply_with_search)
                 reply_with_search, extra_files = _parse_code_files(reply_with_search)
                 files += extra_files
-                reply = _normalize_code_blocks(reply_with_search) + "\n\n◐ <i>ответ дополнен поиском</i>"
+                reply = _clean_ai_latex(_normalize_code_blocks(reply_with_search)) + "\n\n◐ <i>ответ дополнен поиском</i>"
                 log.info(f"🔍 Search augmented reply for uid={uid}")
     if is_death and _reply_claims_alive(reply):
         log.info(f"⚰️ Death-check verify uid={uid}: {user_msg[:60]}")
@@ -1801,7 +1949,7 @@ async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
                 v_reply = _strip_think_blocks(v_reply)
                 v_reply, extra_files = _parse_code_files(v_reply)
                 files += extra_files
-                reply = _normalize_code_blocks(v_reply) + "\n\n◐ <i>перепроверено по свежим данным</i>"
+                reply = _clean_ai_latex(_normalize_code_blocks(v_reply)) + "\n\n◐ <i>перепроверено по свежим данным</i>"
                 log.info(f"⚰️ Death-check corrected uid={uid}")
     ai_history[uid].append({"role": "assistant", "content": reply})
     return reply, files
