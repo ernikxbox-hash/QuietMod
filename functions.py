@@ -747,8 +747,11 @@ def kb_cmd() -> InlineKeyboardMarkup:
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]
+        # На кнопках только премиум-иконка (icon_custom_emoji_id): белые
+        # ромбики ◇/◆ из текста кнопок убираем — они остаются лишь в заголовке
+        # карточки (feat["title"]), где это текст, а не кнопка.
         row = [InlineKeyboardButton(
-            text=CMD_FEATURES[k]["title"],
+            text=CMD_FEATURES[k]["title"].lstrip("◇◆ "),
             callback_data=f"cmd_info_{k}",
             icon_custom_emoji_id=CUSTOM_EMOJI_CMD or None,
         ) for k in pair]

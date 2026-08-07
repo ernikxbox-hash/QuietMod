@@ -793,7 +793,7 @@ def kb_cmd_main() -> InlineKeyboardMarkup:
     """
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="◆ Подробнее",
+            text="Подробнее",
             callback_data="cmd_menu",
             icon_custom_emoji_id=CUSTOM_EMOJI_CMD or None,
         ),

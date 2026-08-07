@@ -4,9 +4,11 @@
 
 Правила:
 - Реагируем только на сообщения, начинающиеся с `.слово` (точка + слово).
-- Известные команды НЕ трогаем: их хендлеры зарегистрированы раньше и
-  выигрывают по приоритету; если слово из известного списка — молчим,
-  даже если конкретная форма команды не сматчилась (например, `.mute хз`).
+- Известные команды исключаем на уровне РЕГЕКСА (negative lookahead), а не
+  в теле хендлера: в aiogram первый подходящий хендлер выигрывает, и если
+  наш регекс сматчит известную команду (.cmd, .help, .ai и т.д.), событие
+  съест этот хендлер, а настоящий (из handlers_commands / handlers_admin)
+  не вызовется вовсе.
 - В бизнес-чатах подсказку видит только владелец подключения.
 - Чтобы не спамить — не чаще раза в 30 секунд на чат.
 - Модуль подключается ДО catch-all перехватчика (handlers_intercept),
@@ -30,7 +32,10 @@ _KNOWN_NAMES = {
     "bold", "italic", "mono", "line", "crossed", "hidden", "quote",
 }
 
-_CMD_RE = re.compile(r"(?i)^\.([a-zа-яё0-9_]{1,32})\b")
+# Известные команды исключаем на уровне регекса — см. докстринг модуля.
+_KNOWN_ALT = "|".join(re.escape(n) + r"\b" for n in sorted(_KNOWN_NAMES, key=len, reverse=True))
+_CMD_PATTERN = rf"(?is)^\.(?!{_KNOWN_ALT})([a-zа-яё0-9_]{{1,32}})\b"
+_CMD_RE = re.compile(_CMD_PATTERN)
 _HINT_COOLDOWN: dict[int, float] = {}
 
 
@@ -64,7 +69,7 @@ async def _reply_hint(msg: Message, word: str) -> None:
 
 
 # ── Бизнес-чаты (подсказку видит только владелец) ─────────────────────
-@dp.business_message(F.text.regexp(r"(?is)^\.[a-zа-яё0-9_]{1,32}\b"))
+@dp.business_message(F.text.regexp(_CMD_PATTERN))
 async def on_unknown_business(msg: Message):
     conn_id = msg.business_connection_id
     if not conn_id or not msg.from_user:
@@ -73,17 +78,17 @@ async def on_unknown_business(msg: Message):
     if owner_id is None or msg.from_user.id != owner_id:
         return
     word = _cmd_word(msg.text or "")
-    if not word or word in _KNOWN_NAMES:
+    if not word:
         return
     await _reply_hint(msg, word)
 
 
 # ── Группы / супергруппы ──────────────────────────────────────────────
-@dp.message(F.text.regexp(r"(?is)^\.[a-zа-яё0-9_]{1,32}\b"), F.chat.type.in_({"group", "supergroup"}))
+@dp.message(F.text.regexp(_CMD_PATTERN), F.chat.type.in_({ "group", "supergroup" }))
 async def on_unknown_group(msg: Message):
     if not msg.from_user:
         return
     word = _cmd_word(msg.text or "")
-    if not word or word in _KNOWN_NAMES:
+    if not word:
         return
     await _reply_hint(msg, word)

@@ -55,7 +55,18 @@ def _extract_media(msg: Message) -> tuple[str, Optional[str]]:
     return "◆ Текст", None
 
 
-@dp.business_message()
+def _not_dot_command(msg: Message) -> bool:
+    """Фильтр перехватчика: команды бота (текст с точки) не перехватываем и
+    не архивируем — их обрабатывают свои хендлеры.
+
+    Это ФИЛЬТР, а не ранний return в теле хендлера: в aiogram первый
+    подходящий хендлер выигрывает, и catch-all @dp.business_message() со
+    старым ранним return съедал .cmd/.help раньше их хендлера из админки.
+    """
+    return not (msg.text or "").startswith(".")
+
+
+@dp.business_message(_not_dot_command)
 async def on_business_msg(msg: Message):
     if not msg.business_connection_id:
         return
@@ -63,8 +74,6 @@ async def on_business_msg(msg: Message):
     # не попадают — иначе бот сам себе шлёт «удалённое» при обработке команд.
     # Сверяем именно с нашим bot.id: чужие боты в чате архивируются как обычно.
     if msg.from_user and msg.from_user.id == bot.id:
-        return
-    if msg.text and msg.text.lower().startswith((".ai", ".spam", ".price", ".curs", ".mute", ".unmute", ".nomute", ".unnomute", ".afk", ".unafk", ".code", ".uncode", ".wbl", ".unwbl", ".black", ".unblack", ".cmd", ".help", ".knb", ".level", ".unlevel", ".who", ".ramka", ".stik", ".krom", ".voice", ".wm", ".gif", ".шрифт", ".info", ".bold ", ".italic ", ".mono ", ".line ", ".crossed ", ".hidden ", ".quote ")):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "save")
     if owner_id is None:
