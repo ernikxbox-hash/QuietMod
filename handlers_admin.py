@@ -16,9 +16,10 @@ from aiogram.types import (
 from html import escape as html_escape
 
 import database as db
-from business_api import _business_edit_message, _business_send_message_ex
+from business_api import _business_edit_message
 from core import (
     ADMIN_ID,
+    BOT_USERNAME,
     CHANNEL_URL,
     CHANNEL_USERNAME,
     GROQ_API_KEYS,
@@ -808,14 +809,26 @@ async def on_cmd(msg: Message):
 
 @dp.business_message(F.text.regexp(r"(?i)^(?:\.cmd|\.help)$"))
 async def on_cmd_business(msg: Message):
+    """В ЛС с другом каталог не открывается: вежливая подсказка, где он есть.
+
+    В бизнес-чате меню бота не разворачивается (и засоряет личку), поэтому
+    направляем в ЛС с ботом или в группу, где бот администратор.
+    """
+    hint = (
+        "◆ <b>QUIET MOD</b> 👁️ — все команды\n"
+        f"<code>{LINE}</code>\n\n"
+        "◇ В этом чате каталог не открывается.\n"
+        "   Он работает там, где бот — полноценный\n"
+        "   участник:\n\n"
+        f"◇ В ЛС с ботом — <a href=\"https://t.me/{BOT_USERNAME}\">@{BOT_USERNAME}</a>\n"
+        "◇ В группе, где бот администратор\n\n"
+        f"<code>{LINE}</code>\n"
+        "◇ Напиши <code>.cmd</code> там — и увидишь\n"
+        "   все функции бота."
+    )
     await _business_edit_message(
         msg.business_connection_id, msg.chat.id, msg.message_id,
-        "◆ <b>QUIET MOD</b> 👁️ — все команды",
-    )
-    await _business_send_message_ex(
-        msg.business_connection_id, msg.chat.id,
-        cmd_catalog_text(),
-        reply_markup=kb_cmd_main().model_dump(exclude_none=True),
+        hint,
     )
 
 
