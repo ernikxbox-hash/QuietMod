@@ -421,6 +421,18 @@ async def get_recent_messages(owner_id: int, limit: int = 20) -> list[dict]:
         (owner_id, limit)
     ) as cur:
         return [dict(r) for r in await cur.fetchall()]
+async def get_messages_since(owner_id: int, since_iso: str, limit: int = 300) -> list[dict]:
+    """Сообщения архива владельца с момента since_iso — для .recap (ИИ-рекап).
+
+    Порядок хронологический (id ASC) — ИИ удобнее видеть переписку как есть.
+    Ограничение limit защищает от раздувания контекста на очень активных чатах.
+    """
+    db = _get_conn()
+    async with db.execute(
+        "SELECT * FROM messages WHERE owner_id=? AND created_at >= ? ORDER BY id ASC LIMIT ?",
+        (owner_id, since_iso, limit),
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
 async def delete_message(owner_id: int, msg_id: int):
     db = _get_conn()
     async with _write_lock:

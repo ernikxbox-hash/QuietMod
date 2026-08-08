@@ -29,7 +29,7 @@ _KNOWN_NAMES = {
     "afk", "unafk", "code", "uncode", "wbl", "unwbl", "black", "unblack",
     "cmd", "help", "knb", "level", "unlevel", "who", "ramka", "stik", "krom",
     "voice", "wm", "gif", "audio", "шрифт", "info", "sled", "unsled", "infosled",
-    "bold", "italic", "mono", "line", "crossed", "hidden", "quote",
+    "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "recap",
 }
 
 # Известные команды исключаем на уровне регекса — см. докстринг модуля.

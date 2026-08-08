@@ -23,6 +23,7 @@ import handlers_shrift    # ✨ .шрифт (стили текста: капс, 
 import handlers_unknown   # ◇ неизвестные команды → подсказка (.фыва → «нет такой, вот .cmd»)
 import handlers_errors    # 🛡 глобальный обработчик ошибок (репорт админу + «не получилось»)
 import handlers_intercept  # перехват удалённых/изменённых + голосовые (catch-all)
+import handlers_recap      # 🧠 .recap (ИИ-рекап переписки из архива → recap.txt)
 import handlers_ai         # ИИ-консьерж в ЛС и поиск по архиву
 import handlers_menu       # ЛС-меню: сохранённые, howto, профиль, архив, донаты
 import handlers_admin      # админка, .cmd список команд, рассылки, группы/каналы

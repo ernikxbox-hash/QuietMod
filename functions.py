@@ -746,11 +746,18 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".sled @durov",
         "note": "Только в ЛС. Опрос каждые 5 мин. Онлайн/время в сети НЕ отслеживаются (ограничение Bot API)"
     },
+    "recap": {
+        "title": "◇ .recap",
+        "desc": "ИИ-рекап переписки из архива: бот сжимает последние сообщения (включая удалённые!) в краткий пересказ и присылает файл recap.txt.",
+        "usage": ".recap · .recap 7",
+        "example": ".recap · .recap 3",
+        "note": "Только в ЛС с ботом. .recap — за сутки, .recap N — за N дней (1–30). Уникально: в рекап попадают и удалённые сообщения"
+    },
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
     cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "black", "price", "info", "curs", "knb", "level", "who", "ramka", "stik", "krom", "voice", "wm", "gif", "audio", "shrift",
-                "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled"]
+                "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled", "recap"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]
