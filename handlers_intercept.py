@@ -213,6 +213,15 @@ async def on_edited_business_msg(msg: Message):
     # Редактирование сделал сам бот (статусы «◆ · · ·», ответы) — в архив не попадает.
     if is_bot_edit or (msg.from_user and msg.from_user.id == bot.id):
         return
+    if is_owner_edit:
+        # Владелец правит СВОЮ команду: команды в архив не попадают, поэтому
+        # «нет в архиве» у правки владельца = это была команда (правку сделал
+        # бот — форматирование .bold/.italic/... — или сам владелец). Такую
+        # правку не перехватываем: ни уведомления, ни записи в архив — иначе
+        # результат команды («Привет» из .bold Привет) попадёт в архив и даст
+        # ложные «изменённое/удалённое».
+        if not await db.get_message(owner_id, msg.message_id):
+            return
     if not is_owner_edit:
         cached = await db.get_message(owner_id, msg.message_id)
         old_text = cached["text"] if cached else None
