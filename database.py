@@ -530,60 +530,69 @@ async def get_archive_stats(owner_id: int) -> dict:
 
     Собирает всё одним проходом: счётчики, чаты, собеседники, активность
     по часам, медиа, самое длинное сообщение и тексты для топ-слов.
+
+    Сообщения ДРУГИХ ботов исключаются из статистики: у ботов юзернейм
+    всегда заканчивается на «bot» (требование Telegram), поэтому надёжно
+    отсекаем их по маске, иначе в статистику попадает реклама ботов
+    (например, длинные промо-сообщения) и цифры врут.
     """
+    # username хранится с «@», поэтому маска «%bot» ловит и «@SaveAiobot».
+    _NB = " AND (username IS NULL OR LOWER(username) NOT LIKE '%bot')"
     db = _get_conn()
     out: dict = {}
-    async with db.execute("SELECT COUNT(*) FROM messages WHERE owner_id=?", (owner_id,)) as cur:
+    async with db.execute(
+        f"SELECT COUNT(*) FROM messages WHERE owner_id=?{_NB}", (owner_id,)
+    ) as cur:
         out["total"] = (await cur.fetchone())[0]
     async with db.execute(
-        "SELECT MIN(created_at) AS first, MAX(created_at) AS last FROM messages WHERE owner_id=?",
+        f"SELECT MIN(created_at) AS first, MAX(created_at) AS last FROM messages WHERE owner_id=?{_NB}",
         (owner_id,),
     ) as cur:
         r = await cur.fetchone()
         out["first"] = r[0] if r else None
         out["last"] = r[1] if r else None
     async with db.execute(
-        "SELECT chat, COUNT(*) AS c FROM messages WHERE owner_id=? GROUP BY chat ORDER BY c DESC LIMIT 5",
+        f"SELECT chat, COUNT(*) AS c FROM messages WHERE owner_id=?{_NB} GROUP BY chat ORDER BY c DESC LIMIT 5",
         (owner_id,),
     ) as cur:
         out["chats"] = [dict(r) for r in await cur.fetchall()]
     async with db.execute(
-        """SELECT from_name, username, COUNT(*) AS c FROM messages
-           WHERE owner_id=? GROUP BY sender_id ORDER BY c DESC LIMIT 8""",
+        f"""SELECT from_name, username, COUNT(*) AS c FROM messages
+           WHERE owner_id=?{_NB} GROUP BY sender_id ORDER BY c DESC LIMIT 8""",
         (owner_id,),
     ) as cur:
         out["senders"] = [dict(r) for r in await cur.fetchall()]
     async with db.execute(
-        "SELECT substr(created_at, 12, 2) AS h, COUNT(*) AS c FROM messages WHERE owner_id=? GROUP BY h",
+        f"SELECT substr(created_at, 12, 2) AS h, COUNT(*) AS c FROM messages WHERE owner_id=?{_NB} GROUP BY h",
         (owner_id,),
     ) as cur:
         out["hours"] = {int(r["h"]): r["c"] for r in await cur.fetchall()}
     async with db.execute(
-        "SELECT COUNT(*) FROM messages WHERE owner_id=? AND media_type != '◆ Текст'",
+        f"SELECT COUNT(*) FROM messages WHERE owner_id=?{_NB} AND media_type != '◆ Текст'",
         (owner_id,),
     ) as cur:
         out["media"] = (await cur.fetchone())[0]
     async with db.execute(
-        """SELECT media_type, COUNT(*) AS c FROM messages
-           WHERE owner_id=? AND media_type != '◆ Текст' GROUP BY media_type ORDER BY c DESC""",
+        f"""SELECT media_type, COUNT(*) AS c FROM messages
+           WHERE owner_id=?{_NB} AND media_type != '◆ Текст' GROUP BY media_type ORDER BY c DESC""",
         (owner_id,),
     ) as cur:
         out["media_types"] = [dict(r) for r in await cur.fetchall()]
     async with db.execute(
-        """SELECT text, chat, from_name FROM messages
-           WHERE owner_id=? AND text IS NOT NULL AND text != ''
+        f"""SELECT text, chat, from_name, username FROM messages
+           WHERE owner_id=?{_NB} AND text IS NOT NULL AND text != ''
            ORDER BY LENGTH(text) DESC LIMIT 1""",
         (owner_id,),
     ) as cur:
         r = await cur.fetchone()
         out["longest"] = dict(r) if r else None
     async with db.execute(
-        "SELECT COUNT(*) FROM messages WHERE owner_id=? AND substr(created_at,12,2) BETWEEN '00' AND '05'",
+        f"SELECT COUNT(*) FROM messages WHERE owner_id=?{_NB} AND substr(created_at,12,2) BETWEEN '00' AND '05'",
         (owner_id,),
     ) as cur:
         out["night"] = (await cur.fetchone())[0]
     async with db.execute(
-        "SELECT text FROM messages WHERE owner_id=? AND text IS NOT NULL AND text != '' ORDER BY id DESC LIMIT 3000",
+        f"SELECT text FROM messages WHERE owner_id=?{_NB} AND text IS NOT NULL AND text != '' ORDER BY id DESC LIMIT 3000",
         (owner_id,),
     ) as cur:
         out["texts"] = [r[0] for r in await cur.fetchall()]

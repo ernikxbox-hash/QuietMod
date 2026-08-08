@@ -71,7 +71,20 @@ def _top_words(texts: list[str], n: int = 10) -> list[tuple[str, int]]:
 
 
 def _sender_label(row: dict) -> str:
-    return (row.get("username") or "").strip() or (row.get("from_name") or "?")
+    """Красивый отправитель: один @ + username, или имя. В БД username хранится
+    с «@» — убираем лишний, чтобы не было «@@name»."""
+    uname = (row.get("username") or "").strip().lstrip("@")
+    if uname:
+        return f"@{uname}"
+    return (row.get("from_name") or "?").strip() or "?"
+
+
+def _clean_name(name: str, limit: int = 28) -> str:
+    """Чистим имя чата/юзера: схлопываем пробелы, режем длину, убираем мусорные символы."""
+    s = re.sub(r"\s+", " ", (name or "").strip())
+    if len(s) > limit:
+        s = s[: limit - 1] + "…"
+    return s or "Личные"
 
 
 # ── .stats — статистика архива ────────────────────────────────────────
@@ -88,8 +101,8 @@ def _render_stats(st: dict) -> str:
             d0 = datetime.fromisoformat(first)
             d1 = datetime.fromisoformat(last)
             days = max(1, (d1 - d0).days + 1)
-            per_day = round(total / days, 1)
-            lines.append(f"◇ В архиве: <b>{days} дн.</b> · в среднем <b>{per_day}</b> сообщ./день")
+            per_day = total / days
+            lines.append(f"◇ В архиве: <b>{days} дн.</b> · в среднем <b>{per_day:g}</b> сообщ./день")
         except Exception:
             pass
     lines.append(f"◇ Медиа: <b>{st.get('media') or 0}</b>")
@@ -97,13 +110,12 @@ def _render_stats(st: dict) -> str:
     if st.get("chats"):
         lines += ["", "◆ <b>ЧАТЫ</b>"]
         for c in st["chats"][:5]:
-            lines.append(f"◇ {c['chat']} — <b>{c['c']}</b>")
+            lines.append(f"◇ {_clean_name(c['chat'])} — <b>{c['c']}</b>")
 
     if st.get("senders"):
         lines += ["", "◆ <b>СОБЕСЕДНИКИ</b>"]
         for s in st["senders"][:5]:
-            name = f"@{s['username']}" if s.get("username") else (s.get("from_name") or "?")
-            lines.append(f"◇ {name} — <b>{s['c']}</b>")
+            lines.append(f"◇ {_sender_label(s)} — <b>{s['c']}</b>")
 
     hours = st.get("hours") or {}
     if hours:
@@ -185,7 +197,7 @@ async def _find_reply(uid: int, query: str) -> str:
             "◇ Скорее всего, такого не было — или попробуй переформулировать запрос."
         )
     context = "\n".join(
-        f"[{r.get('chat') or '?'}] {_sender_label(r)} ({r.get('date')}): "
+        f"[{_clean_name(r.get('chat') or '?')}] {_sender_label(r)} ({r.get('date')}): "
         f"{(r.get('text') or '').strip()[:_FIND_SNIPPET]}"
         for _, r in top
     )
