@@ -20,6 +20,7 @@ from business_api import (
     _business_edit_message,
     _business_send_message_ex,
     _get_owner_id_cached,
+    _is_bot_edited,
 )
 from core import BOT_TOKEN, BOT_USERNAME, GROQ_API_KEYS, bot, dp, get_http, log
 from functions import (
@@ -190,6 +191,11 @@ async def on_business_msg(msg: Message):
 @dp.edited_business_message()
 async def on_edited_business_msg(msg: Message):
     if not msg.business_connection_id:
+        return
+    # Правку сделал сам бот (форматирование .bold, статусы «◆ · · ·», результаты
+    # команд) — пропускаем целиком: ни уведомления, ни записи в архив. Иначе
+    # бот сам себе шлёт «✦ Сообщение отредактировано» при обработке команд.
+    if _is_bot_edited(msg.chat.id, msg.message_id):
         return
     owner_id = await _get_owner_id_cached(msg.business_connection_id, "edit")
     if owner_id is None:

@@ -40,8 +40,41 @@ async def _get_owner_id_cached(conn_id: str, ctx: str) -> Optional[int]:
         log.warning(f"business owner upsert ({ctx}): {e}")
     return owner_id
 
+# ── Правки, сделанные самим ботом ─────────────────────────────────────
+_BOT_EDITED_TTL_SECONDS = 120  # правка и её апдейт идут друг за другом — секунд хватает
+_BOT_EDITED: dict[tuple[int, int], float] = {}  # (chat_id, msg_id) -> время правки
+
+
+def _mark_bot_edited(chat_id: int, msg_id: int) -> None:
+    """Запоминаем, что сообщение отредактировал сам бот (через Business API).
+
+    Telegram присылает апдейт edited_business_message и на правки, которые
+    сделал бот (форматирование .bold, статусы «◆ · · ·», результаты .curs
+    и т.п.). Перехватчик должен такие правки пропускать — иначе бот сам
+    себе шлёт «✦ Сообщение отредактировано» при обработке собственных
+    команд. Запись живёт не дольше TTL: правка и её апдейт приходят
+    практически одновременно.
+    """
+    now = asyncio.get_running_loop().time()
+    if len(_BOT_EDITED) > 1000:  # ленивая чистка старых записей
+        stale = [k for k, t in _BOT_EDITED.items() if now - t > _BOT_EDITED_TTL_SECONDS]
+        for k in stale:
+            _BOT_EDITED.pop(k, None)
+    _BOT_EDITED[(chat_id, msg_id)] = now
+
+
+def _is_bot_edited(chat_id: int, msg_id: int) -> bool:
+    """Эту правку сделал сам бот? (проверка со снятием отметки — одноразовая)"""
+    return _BOT_EDITED.pop((chat_id, msg_id), None) is not None
+
+
 # ── Business-методы Telegram Bot API (через общую aiohttp-сессию) ─────
 async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, text: str, reply_markup=None) -> tuple[bool, str | None]:
+    # Правку делает сам бот — перехватчик должен пропустить её апдейт.
+    # Ставим отметку ЗДЕСЬ (в самой низкоуровневой функции), чтобы была
+    # покрыта ЛЮБАЯ бизнес-правка бота — через _business_edit_message,
+    # _business_edit_ai_html и любые будущие обёртки.
+    _mark_bot_edited(chat_id, msg_id)
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
     payload = {
         "business_connection_id": conn_id,
