@@ -50,7 +50,8 @@ async def main():
         await bot.send_message(
             ADMIN_ID,
             f"✔ <b>Бот запущен</b> · Quiet Mod 👁️ · SQLite · Railway\n"
-            f"◇ Модель: GPT-OSS 120B"
+            f"◇ Модель: GPT-OSS 120B\n"
+            f"◇ Защита правок команд: <b>вкл</b> (build 2026.08.08)"
         )
     except Exception:
         pass
