@@ -507,6 +507,89 @@ async def find_sender_id_by_username(username: str) -> Optional[int]:
             return row[0]
     return None
 
+async def search_messages_keywords(owner_id: int, keywords: list[str], limit: int = 100) -> list[dict]:
+    """Поиск по архиву по НЕСКОЛЬКИМ ключевым словам (OR-LIKE) — для .find.
+
+    Возвращает кандидатов, релевантность считается уже в Python (сколько
+    ключевых слов встретилось в сообщении).
+    """
+    if not keywords:
+        return []
+    db = _get_conn()
+    like = " OR ".join(["text LIKE ?"] * len(keywords))
+    params = [owner_id] + [f"%{kw}%" for kw in keywords] + [limit]
+    async with db.execute(
+        f"SELECT * FROM messages WHERE owner_id=? AND ({like}) ORDER BY id DESC LIMIT ?",
+        params,
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_archive_stats(owner_id: int) -> dict:
+    """Агрегаты архива владельца — для .stats (только ЛС с ботом).
+
+    Собирает всё одним проходом: счётчики, чаты, собеседники, активность
+    по часам, медиа, самое длинное сообщение и тексты для топ-слов.
+    """
+    db = _get_conn()
+    out: dict = {}
+    async with db.execute("SELECT COUNT(*) FROM messages WHERE owner_id=?", (owner_id,)) as cur:
+        out["total"] = (await cur.fetchone())[0]
+    async with db.execute(
+        "SELECT MIN(created_at) AS first, MAX(created_at) AS last FROM messages WHERE owner_id=?",
+        (owner_id,),
+    ) as cur:
+        r = await cur.fetchone()
+        out["first"] = r[0] if r else None
+        out["last"] = r[1] if r else None
+    async with db.execute(
+        "SELECT chat, COUNT(*) AS c FROM messages WHERE owner_id=? GROUP BY chat ORDER BY c DESC LIMIT 5",
+        (owner_id,),
+    ) as cur:
+        out["chats"] = [dict(r) for r in await cur.fetchall()]
+    async with db.execute(
+        """SELECT from_name, username, COUNT(*) AS c FROM messages
+           WHERE owner_id=? GROUP BY sender_id ORDER BY c DESC LIMIT 8""",
+        (owner_id,),
+    ) as cur:
+        out["senders"] = [dict(r) for r in await cur.fetchall()]
+    async with db.execute(
+        "SELECT substr(created_at, 12, 2) AS h, COUNT(*) AS c FROM messages WHERE owner_id=? GROUP BY h",
+        (owner_id,),
+    ) as cur:
+        out["hours"] = {int(r["h"]): r["c"] for r in await cur.fetchall()}
+    async with db.execute(
+        "SELECT COUNT(*) FROM messages WHERE owner_id=? AND media_type != '◆ Текст'",
+        (owner_id,),
+    ) as cur:
+        out["media"] = (await cur.fetchone())[0]
+    async with db.execute(
+        """SELECT media_type, COUNT(*) AS c FROM messages
+           WHERE owner_id=? AND media_type != '◆ Текст' GROUP BY media_type ORDER BY c DESC""",
+        (owner_id,),
+    ) as cur:
+        out["media_types"] = [dict(r) for r in await cur.fetchall()]
+    async with db.execute(
+        """SELECT text, chat, from_name FROM messages
+           WHERE owner_id=? AND text IS NOT NULL AND text != ''
+           ORDER BY LENGTH(text) DESC LIMIT 1""",
+        (owner_id,),
+    ) as cur:
+        r = await cur.fetchone()
+        out["longest"] = dict(r) if r else None
+    async with db.execute(
+        "SELECT COUNT(*) FROM messages WHERE owner_id=? AND substr(created_at,12,2) BETWEEN '00' AND '05'",
+        (owner_id,),
+    ) as cur:
+        out["night"] = (await cur.fetchone())[0]
+    async with db.execute(
+        "SELECT text FROM messages WHERE owner_id=? AND text IS NOT NULL AND text != '' ORDER BY id DESC LIMIT 3000",
+        (owner_id,),
+    ) as cur:
+        out["texts"] = [r[0] for r in await cur.fetchall()]
+    return out
+
+
 async def search_messages(owner_id: int, query: str) -> list[dict]:
     db = _get_conn()
     async with db.execute("""

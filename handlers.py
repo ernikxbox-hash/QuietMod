@@ -24,6 +24,7 @@ import handlers_unknown   # ◇ неизвестные команды → под
 import handlers_errors    # 🛡 глобальный обработчик ошибок (репорт админу + «не получилось»)
 import handlers_intercept  # перехват удалённых/изменённых + голосовые (catch-all)
 import handlers_recap      # 🧠 .recap (ИИ-рекап переписки из архива → recap.txt)
+import handlers_archive    # 📊 .stats · 🔍 .find — аналитика и ИИ-поиск по архиву (ЛС)
 import handlers_ai         # ИИ-консьерж в ЛС и поиск по архиву
 import handlers_menu       # ЛС-меню: сохранённые, howto, профиль, архив, донаты
 import handlers_admin      # админка, .cmd список команд, рассылки, группы/каналы

@@ -753,11 +753,25 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".recap · .recap 3",
         "note": "Только в ЛС с ботом. .recap — за сутки, .recap N — за N дней (1–30). Уникально: в рекап попадают и удалённые сообщения"
     },
+    "stats": {
+        "title": "◇ .stats",
+        "desc": "Статистика твоего архива: сообщения, дни, чаты, собеседники, час пик, «ночной волк», медиа, топ слов, самый длинный спич.",
+        "usage": ".stats",
+        "example": ".stats",
+        "note": "Только в ЛС с ботом — архив личный, никто его не видит"
+    },
+    "find": {
+        "title": "◇ .find",
+        "desc": "ИИ-поиск по архиву: спроси по-человечески («.find пароль от интернета») — бот найдёт в переписке и ответит с цитатами. Учитывает и удалённые сообщения.",
+        "usage": ".find запрос",
+        "example": ".find кто обещал вернуть деньги · .find что мы решили по поездке",
+        "note": "Только в ЛС с ботом. Если не нашёл — вежливо предложит переформулировать"
+    },
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
     cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "black", "price", "info", "curs", "knb", "level", "who", "ramka", "stik", "krom", "voice", "wm", "gif", "audio", "shrift",
-                "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled", "recap"]
+                "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled", "recap", "stats", "find"]
     rows = []
     for i in range(0, len(cmd_keys), 2):
         pair = cmd_keys[i:i+2]
