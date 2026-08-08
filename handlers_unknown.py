@@ -28,7 +28,7 @@ _KNOWN_NAMES = {
     "ai", "spam", "price", "curs", "mute", "unmute", "nomute", "unnomute",
     "afk", "unafk", "code", "uncode", "wbl", "unwbl", "black", "unblack",
     "cmd", "help", "knb", "level", "unlevel", "who", "ramka", "stik", "krom",
-    "voice", "wm", "gif", "шрифт", "info", "sled", "unsled", "infosled",
+    "voice", "wm", "gif", "audio", "шрифт", "info", "sled", "unsled", "infosled",
     "bold", "italic", "mono", "line", "crossed", "hidden", "quote",
 }
 

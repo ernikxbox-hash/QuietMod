@@ -676,6 +676,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": "ответь на видео → .gif",
         "note": "В ЛС с ботом: .gif → пришли видео. В чатах: ответь на видео + .gif"
     },
+    "audio": {
+        "title": "◇ .audio",
+        "desc": "Звук из видео — ответь на видео и напиши .audio, и бот вытащит из него аудио и пришлёт mp3.",
+        "usage": ".audio (ответь на видео)",
+        "example": "ответь на видео → .audio",
+        "note": "В ЛС с ботом: .audio → пришли видео. В чатах: ответь на видео + .audio"
+    },
     "shrift": {
         "title": "◆ .шрифт",
         "desc": "Стили текста: капс, низ, волна, зеркало, транслит, пацан, хак, разрядка, точки, скобки, углы, черта, подчёрк, зачёрк, рок, точка, круг, мат, готика, скрипт, курсив, моно, sans, жирный.",
@@ -742,7 +749,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "black", "price", "info", "curs", "knb", "level", "who", "ramka", "stik", "krom", "voice", "wm", "gif", "shrift",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "black", "price", "info", "curs", "knb", "level", "who", "ramka", "stik", "krom", "voice", "wm", "gif", "audio", "shrift",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled"]
     rows = []
     for i in range(0, len(cmd_keys), 2):

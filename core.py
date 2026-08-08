@@ -70,6 +70,7 @@ class S(StatesGroup):
     krom = State()
     wm = State()  # 🏷 .wm (водяной знак на фото)
     gif = State()  # 🎞 .gif (видео → гифка)
+    audio = State()  # 🎵 .audio (видео → mp3)
 
 _http_session: Optional[aiohttp.ClientSession] = None
 
