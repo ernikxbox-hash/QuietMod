@@ -1,6 +1,9 @@
-"""Админка (/admin), .cmd список функций, рассылки и перехват групповых сообщений."""
+"""Админка (/admin), .cmd список функций, диагностика, рассылки и перехват групповых сообщений."""
 import asyncio
+import os
+import shutil
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
@@ -24,6 +27,7 @@ from core import (
     CHANNEL_USERNAME,
     GROQ_API_KEYS,
     GROQ_MODEL,
+    RUNTIME_TASKS,
     S,
     bot,
     dp,
@@ -200,6 +204,182 @@ async def _probe_groq_key(key: str) -> tuple[bool, str]:
             return False, f"HTTP {resp.status}: {(await resp.text())[:100]}"
     except Exception as e:
         return False, str(e)[:100]
+
+
+# ── 🩺 Диагностика бота ─────────────────────────────────────────────────
+def _status_ok(label: str, detail: str) -> str:
+    return f"✅ <b>{label}</b> — {detail}"
+
+
+def _status_warn(label: str, detail: str) -> str:
+    return f"⚠️ <b>{label}</b> — {detail}"
+
+
+def _status_bad(label: str, detail: str) -> str:
+    return f"❌ <b>{label}</b> — {detail}"
+
+
+def _status_error(error: Exception) -> str:
+    detail = str(error).strip().replace("\n", " ")
+    return html_escape(detail[:160] or error.__class__.__name__)
+
+
+async def _check_database_status() -> tuple[str, str]:
+    """Проверяет живое соединение с SQLite и показывает безопасную статистику."""
+    if db._conn is None:
+        return "bad", "соединение не инициализировано — перезапусти бота"
+    try:
+        async with db._conn.execute("SELECT 1") as cursor:
+            await cursor.fetchone()
+        counts: list[str] = []
+        for table, title in (("users", "пользователей"), ("messages", "сообщений")):
+            async with db._conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ) as cursor:
+                exists = (await cursor.fetchone())[0]
+            if exists:
+                async with db._conn.execute(f"SELECT COUNT(*) FROM {table}") as cursor:
+                    counts.append(f"{title}: {(await cursor.fetchone())[0]}")
+        db_file = Path(db.DB_PATH)
+        size = f"{db_file.stat().st_size / 1024 / 1024:.1f} МБ" if db_file.exists() else "файл ещё не создан"
+        detail = "работает"
+        if counts:
+            detail += " · " + " · ".join(counts)
+        detail += f" · размер: {size}"
+        return "ok", detail
+    except Exception as error:
+        return "bad", _status_error(error)
+
+
+async def _check_telegram_status() -> tuple[str, str]:
+    try:
+        me = await asyncio.wait_for(bot.get_me(), timeout=8)
+        username = f"@{me.username}" if me.username else "без username"
+        return "ok", f"Bot API отвечает · {html_escape(username)}"
+    except Exception as error:
+        return "bad", f"Bot API не отвечает · {_status_error(error)}"
+
+
+async def _check_groq_status() -> tuple[str, str]:
+    if not GROQ_API_KEYS:
+        return "warn", "ключи не настроены — .ai и расшифровка работать не будут"
+    results = await asyncio.gather(*[_probe_groq_key(key) for key in GROQ_API_KEYS])
+    working = sum(1 for ok, _ in results if ok)
+    if working:
+        return "ok", f"доступен {working} из {len(results)} ключей · модель: {GROQ_MODEL}"
+    errors = "; ".join(error for _, error in results if error)
+    return "bad", f"ни один ключ не отвечает · {html_escape(errors[:180])}"
+
+
+def _check_ffmpeg_status() -> tuple[str, str]:
+    ffmpeg_path = shutil.which("ffmpeg")
+    if ffmpeg_path:
+        return "ok", html_escape(ffmpeg_path)
+    try:
+        import imageio_ffmpeg
+        bundled_path = imageio_ffmpeg.get_ffmpeg_exe()
+        return "ok", f"встроенный binary · {html_escape(bundled_path)}"
+    except Exception:
+        return "bad", "не найден — .krom, .gif и .audio могут не работать"
+
+
+def _runtime_task_status() -> list[str]:
+    task_titles = {
+        "purge": "очистка сохранённых файлов",
+        "sled": "слежение за профилями",
+        "subscriptions": "проверка подписок",
+    }
+    lines = []
+    for key, title in task_titles.items():
+        task = RUNTIME_TASKS.get(key)
+        if task is None:
+            lines.append(f"❌ <b>{title}</b> — задача не запущена")
+        elif getattr(task, "done", lambda: True)():
+            lines.append(f"❌ <b>{title}</b> — задача остановлена")
+        else:
+            lines.append(f"✅ <b>{title}</b> — работает")
+    return lines
+
+
+async def _render_status() -> str:
+    db_result, telegram_result, groq_result = await asyncio.gather(
+        _check_database_status(),
+        _check_telegram_status(),
+        _check_groq_status(),
+    )
+    lines = [
+        "🩺 <b>ДИАГНОСТИКА QUIET MOD</b>",
+        f"<code>{LINE}</code>",
+        "",
+    ]
+    for label, result in (
+        ("Telegram", telegram_result),
+        ("SQLite", db_result),
+        ("Groq / ИИ", groq_result),
+    ):
+        state, detail = result
+        formatter = _status_ok if state == "ok" else _status_warn if state == "warn" else _status_bad
+        lines.append(formatter(label, detail))
+    ffmpeg_state, ffmpeg_detail = _check_ffmpeg_status()
+    lines.append(
+        (_status_ok if ffmpeg_state == "ok" else _status_bad)("FFmpeg", ffmpeg_detail)
+    )
+    lines.append("")
+    lines.append("<b>Фоновые задачи</b>")
+    lines.extend(_runtime_task_status())
+    lines.append("")
+    lines.append("<b>Конфигурация</b>")
+    lines.append(
+        _status_ok("Гейт подписки", f"канал @{html_escape(CHANNEL_USERNAME)}")
+        if CHANNEL_USERNAME
+        else _status_warn("Гейт подписки", "выключен — CHANNEL_USERNAME пустой")
+    )
+    mtproto_ready = all(os.environ.get(key, "").strip() for key in ("TELEGRAM_API_ID", "TELEGRAM_API_HASH"))
+    lines.append(
+        _status_ok("MTProto", "включён")
+        if mtproto_ready
+        else _status_warn("MTProto", "не настроен — .info/.sled работают с ограничениями")
+    )
+    lines += [
+        f"<code>{LINE}</code>",
+        "◇ Если есть ❌ или ⚠️ — смотри пояснение после тире.",
+        "◇ Токены и ключи в диагностику не выводятся.",
+    ]
+    return "\n".join(lines)
+
+
+@dp.message(
+    F.text.regexp(r"(?i)^\.status$"),
+    F.chat.type == "private",
+)
+async def on_status(msg: Message):
+    if not msg.from_user or msg.from_user.id != ADMIN_ID:
+        return
+    status_message = await msg.answer("🩺 Проверяю компоненты…")
+    try:
+        await status_message.edit_text(await _render_status())
+    except Exception as error:
+        log.error(f".status render: {error}")
+        await status_message.edit_text(
+            "❌ <b>Диагностика не сформировалась</b>\n"
+            "Проверь логи Railway — команда получила внутреннюю ошибку."
+        )
+
+
+@dp.callback_query(F.data == "admin_status")
+async def cb_status(call: CallbackQuery):
+    if not _is_admin(call):
+        await call.answer("Только для администратора", show_alert=True)
+        return
+    await call.answer()
+    await call.message.edit_text(
+        await _render_status(),
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⟳ Проверить ещё раз", callback_data="admin_status")],
+            [InlineKeyboardButton(text="✕ Закрыть", callback_data="cmd_close")],
+        ]),
+    )
 
 
 @dp.callback_query(F.data == "adm_keys")
@@ -781,6 +961,8 @@ def cmd_catalog_text() -> str:
         "<code>.bold</code> · <code>.italic</code> · <code>.mono</code> · <code>.line</code>\n"
         "<code>.crossed</code> · <code>.hidden</code> · <code>.quote</code> · <code>.knb</code>\n"
         "<code>.level</code> · <code>.who</code> · <code>.fdox</code>\n\n"
+        "◇ <b>АДМИНИСТРАТОР</b>\n"
+        "<code>.status</code> диагностика компонентов бота\n\n"
         f"<code>{LINE}</code>\n"
         "◇ <b>Подробнее о каждой команде</b> — кнопка ниже 👇"
     )

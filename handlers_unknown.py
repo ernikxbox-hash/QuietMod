@@ -30,7 +30,7 @@ _KNOWN_NAMES = {
     "cmd", "help", "knb", "level", "unlevel", "who", "ramka", "stik", "krom",
     "voice", "wm", "gif", "audio", "шрифт", "info", "sled", "unsled", "infosled",
     "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "recap",
-    "stats", "find", "fdox",
+    "stats", "find", "fdox", "status",
 }
 
 # Известные команды исключаем на уровне регекса — см. докстринг модуля.

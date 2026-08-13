@@ -58,6 +58,9 @@ log = logging.getLogger("bot")
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
+# Живые фоновые задачи регистрируются в bot.py и показываются в .status.
+RUNTIME_TASKS: dict[str, object] = {}
+
 class S(StatesGroup):
     ai_chat = State()
     ai_search = State()

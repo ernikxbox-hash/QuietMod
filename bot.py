@@ -1,7 +1,7 @@
 import asyncio
 import signal
 import database as db
-from core import ADMIN_ID, RAMKA_URL, bot, close_http, dp, log
+from core import ADMIN_ID, RAMKA_URL, RUNTIME_TASKS, bot, close_http, dp, log
 from functions import load_black_state
 from handlers_gate import startup_check
 from tasks import _purge_loop, _sub_verify_loop
@@ -58,6 +58,11 @@ async def main():
     purge_task = asyncio.create_task(_purge_loop())
     sled_task = asyncio.create_task(_sled_loop())
     sub_verify_task = asyncio.create_task(_sub_verify_loop())
+    RUNTIME_TASKS.update({
+        "purge": purge_task,
+        "sled": sled_task,
+        "subscriptions": sub_verify_task,
+    })
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
     def _request_stop(*_):
@@ -80,6 +85,8 @@ async def main():
         purge_task.cancel()
         sled_task.cancel()
         sub_verify_task.cancel()
+        for task_name in ("purge", "sled", "subscriptions"):
+            RUNTIME_TASKS.pop(task_name, None)
         if not polling_task.done():
             await dp.stop_polling()
             polling_task.cancel()
