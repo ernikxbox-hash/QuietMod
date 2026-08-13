@@ -634,6 +634,13 @@ CMD_FEATURES: dict[str, dict] = {
         "example": ".who кто самый добрый · .who кто вероятнее купит пиццу",
         "note": "Работает в группах и бизнес-группах · участники — кто писал в чате"
     },
+    "fdox": {
+        "title": "◇ .fdox",
+        "desc": "Шуточная карточка с полностью вымышленными данными: гео, ФИО, телефон, паспорт и СНИЛС.",
+        "usage": ".fdox",
+        "example": ".fdox",
+        "note": "Только прикол: значения генерируются локально, имеют невалидный формат и не относятся к реальным людям"
+    },
     "ramka": {
         "title": "◇ .ramka",
         "desc": "Золотая орнаментальная рамка на фото — ответь на фото и напиши .ramka, и рамка наденется.",
@@ -770,7 +777,7 @@ CMD_FEATURES: dict[str, dict] = {
 }
 
 def kb_cmd() -> InlineKeyboardMarkup:
-    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "black", "price", "info", "curs", "knb", "level", "who", "ramka", "stik", "krom", "voice", "wm", "gif", "audio", "shrift",
+    cmd_keys = ["ai", "spam", "mute", "nomute", "afk", "code", "wbl", "black", "price", "info", "curs", "knb", "level", "who", "fdox", "ramka", "stik", "krom", "voice", "wm", "gif", "audio", "shrift",
                 "bold", "italic", "mono", "line", "crossed", "hidden", "quote", "sled", "recap", "stats", "find"]
     rows = []
     for i in range(0, len(cmd_keys), 2):

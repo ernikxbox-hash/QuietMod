@@ -780,7 +780,7 @@ def cmd_catalog_text() -> str:
         "◇ <b>ТЕКСТ И ИГРЫ</b>\n"
         "<code>.bold</code> · <code>.italic</code> · <code>.mono</code> · <code>.line</code>\n"
         "<code>.crossed</code> · <code>.hidden</code> · <code>.quote</code> · <code>.knb</code>\n"
-        "<code>.level</code> · <code>.who</code>\n\n"
+        "<code>.level</code> · <code>.who</code> · <code>.fdox</code>\n\n"
         f"<code>{LINE}</code>\n"
         "◇ <b>Подробнее о каждой команде</b> — кнопка ниже 👇"
     )
