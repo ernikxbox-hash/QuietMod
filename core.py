@@ -76,18 +76,36 @@ class S(StatesGroup):
     audio = State()  # 🎵 .audio (видео → mp3)
 
 _http_session: Optional[aiohttp.ClientSession] = None
+_http_connector: Optional[aiohttp.TCPConnector] = None
+HTTP_DEFAULT_TIMEOUT = aiohttp.ClientTimeout(total=30, connect=10, sock_read=30)
+HTTP_MEDIA_TIMEOUT = aiohttp.ClientTimeout(total=120, connect=10, sock_read=120)
+HTTP_SHORT_TIMEOUT = aiohttp.ClientTimeout(total=15, connect=5, sock_read=15)
+
 
 def get_http() -> aiohttp.ClientSession:
-    """Общая aiohttp-сессия: переиспользует соединения вместо TLS-рукопожатия на каждый запрос."""
-    global _http_session
+    """Общая HTTP-сессия с пулом соединений.
+
+    Переиспользование TCP/TLS-соединений заметно ускоряет частые Telegram,
+    Groq и внешние API-запросы, не меняя их поведение.
+    """
+    global _http_session, _http_connector
     if _http_session is None or _http_session.closed:
+        _http_connector = aiohttp.TCPConnector(
+            limit=100,
+            limit_per_host=20,
+            ttl_dns_cache=300,
+            enable_cleanup_closed=True,
+        )
         _http_session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=30),
+            connector=_http_connector,
+            timeout=aiohttp.ClientTimeout(total=30, connect=10, sock_read=30),
+            raise_for_status=False,
         )
     return _http_session
 
 async def close_http():
-    global _http_session
+    global _http_session, _http_connector
     if _http_session is not None and not _http_session.closed:
         await _http_session.close()
-        _http_session = None
+    _http_session = None
+    _http_connector = None

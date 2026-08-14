@@ -19,12 +19,16 @@ from core import (
     GROQ_MODEL,
     bot,
     get_http,
+    HTTP_DEFAULT_TIMEOUT,
     log,
 )
 from business_api import _business_edit_message_ex
 from mtproto_resolver import resolve_username_mtproto
 
 ai_history: dict[int, list] = {}
+_AI_HISTORY_LIMIT = 10
+_AI_HISTORY_TTL_SECONDS = 24 * 60 * 60
+_AI_HISTORY_LAST_USE: dict[int, float] = {}
 spam_tasks: dict[tuple[int, int], asyncio.Task] = {}
 business_spam_tasks: dict[tuple[str, int, int], asyncio.Task] = {}
 business_muted_chats: set[tuple[str, int]] = set()
@@ -56,6 +60,8 @@ async def load_black_state() -> None:
     except Exception as e:
         log.warning(f"⬛ load black state: {e}")
 _GROQ_KEY_INDEX: int = 0  # индекс последнего рабочего Groq-ключа (для фолбэка)
+_GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+_GROQ_TIMEOUT = aiohttp.ClientTimeout(total=45, connect=10, sock_read=45)
 PROFANITY_RE = re.compile(
     r"(?iu)\b("
     r"хуй|хуе|хуя|хуи|хуё|хуйн|хуесос|хер|херн|"
@@ -968,7 +974,7 @@ async def _geocode_city(session: aiohttp.ClientSession, city: str) -> Optional[d
             async with session.get(
                 "https://geocoding-api.open-meteo.com/v1/search",
                 params={"name": cand, "count": 1, "language": "ru", "format": "json"},
-                timeout=aiohttp.ClientTimeout(total=8),
+                timeout=HTTP_DEFAULT_TIMEOUT,
             ) as resp:
                 if resp.status != 200:
                     continue
@@ -997,7 +1003,7 @@ async def _get_weather(city: str) -> Optional[str]:
                 "forecast_days": 2,
                 "timezone": "auto",
             },
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=HTTP_DEFAULT_TIMEOUT,
         ) as resp:
             if resp.status != 200:
                 return None
@@ -1085,7 +1091,7 @@ async def _get_crypto_rate(session: aiohttp.ClientSession, crypto: list[str]) ->
     async with session.get(
         "https://api.coingecko.com/api/v3/simple/price",
         params={"ids": id_str, "vs_currencies": "usd,rub"},
-        timeout=aiohttp.ClientTimeout(total=10),
+        timeout=HTTP_DEFAULT_TIMEOUT,
     ) as resp:
         if resp.status != 200:
             return None
@@ -1141,7 +1147,7 @@ async def _get_currency_rate(query: str) -> Optional[str]:
                     )
         async with session.get(
             f"https://open.er-api.com/v6/latest/{base}",
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=HTTP_DEFAULT_TIMEOUT,
         ) as resp:
             if resp.status != 200:
                 return None
@@ -1208,7 +1214,7 @@ async def _fetch_moex_rates() -> dict[str, float]:
             "marketdata.columns": "SECID,LAST",
             "limit": 500,
         }
-        async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+        async with session.get(url, params=params, timeout=HTTP_DEFAULT_TIMEOUT) as resp:
             if resp.status != 200:
                 log.warning(f"MOEX ISS status: {resp.status}")
                 return {}
@@ -1245,7 +1251,7 @@ async def _fetch_cbr_rates() -> Optional[tuple[str, dict[str, float]]]:
         session = get_http()
         async with session.get(
             "https://www.cbr.ru/scripts/XML_daily.asp",
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=HTTP_DEFAULT_TIMEOUT,
         ) as resp:
             if resp.status != 200:
                 log.warning(f"CBR status: {resp.status}")
@@ -1279,7 +1285,7 @@ async def _fetch_erapi_rates() -> Optional[dict[str, float]]:
         session = get_http()
         async with session.get(
             "https://open.er-api.com/v6/latest/RUB",
-            timeout=aiohttp.ClientTimeout(total=10),
+            timeout=HTTP_DEFAULT_TIMEOUT,
         ) as resp:
             if resp.status != 200:
                 log.warning(f"Curs API status: {resp.status}")
@@ -1561,13 +1567,13 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
         try:
             session = get_http()
             async with session.post(
-                "https://api.groq.com/openai/v1/chat/completions",
+                _GROQ_URL,
                 headers={
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 },
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=45),
+                timeout=_GROQ_TIMEOUT,
             ) as resp:
                 import json as _json
                 raw = await resp.text()
@@ -1907,11 +1913,15 @@ async def groq_chat(uid: int, user_msg: str) -> tuple[str, list[dict]]:
     egg = _check_easter_egg(user_msg)
     if egg:
         return egg, []
+    now_mono = asyncio.get_running_loop().time()
+    last_use = _AI_HISTORY_LAST_USE.get(uid)
+    if last_use is not None and now_mono - last_use > _AI_HISTORY_TTL_SECONDS:
+        ai_history.pop(uid, None)
+    _AI_HISTORY_LAST_USE[uid] = now_mono
     history = ai_history.setdefault(uid, [])
     history.append({"role": "user", "content": user_msg})
-    if len(history) > 10:
-        ai_history[uid] = history[-10:]
-        history = ai_history[uid]
+    if len(history) > _AI_HISTORY_LIMIT:
+        del history[:-_AI_HISTORY_LIMIT]
     active_model = GROQ_MODEL
     already_searched = False
     if _is_weather_query(user_msg):

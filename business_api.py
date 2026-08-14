@@ -2,7 +2,7 @@ import asyncio
 from typing import Optional
 import aiohttp
 import database as db
-from core import BOT_TOKEN, bot, get_http, log
+from core import BOT_TOKEN, HTTP_SHORT_TIMEOUT, bot, get_http, log
 
 # ── Владелец business-connection (кэш 10 мин) ─────────────────────────
 _BC_OWNER_CACHE: dict[str, tuple[int, float]] = {}
@@ -87,7 +87,7 @@ async def _business_edit_message_ex(conn_id: str, chat_id: int, msg_id: int, tex
         payload["reply_markup"] = reply_markup
     try:
         session = get_http()
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with session.post(url, json=payload, timeout=HTTP_SHORT_TIMEOUT) as resp:
             data = await resp.json()
             if not data.get("ok"):
                 description = data.get("description")
@@ -113,7 +113,7 @@ async def _business_send_message_ex(conn_id: str, chat_id: int, text: str, reply
         payload["parse_mode"] = parse_mode
     try:
         session = get_http()
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with session.post(url, json=payload, timeout=HTTP_SHORT_TIMEOUT) as resp:
             data = await resp.json()
             if not data.get("ok"):
                 params = data.get("parameters") or {}
@@ -133,7 +133,7 @@ async def _business_delete_message_ex(conn_id: str, msg_id: int) -> tuple[bool, 
     }
     try:
         session = get_http()
-        async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+        async with session.post(url, json=payload, timeout=HTTP_SHORT_TIMEOUT) as resp:
             data = await resp.json()
             if not data.get("ok"):
                 params = data.get("parameters") or {}

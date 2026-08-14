@@ -64,6 +64,12 @@ async def init_db():
     os.makedirs("data", exist_ok=True)
     _conn = await aiosqlite.connect(DB_PATH)
     _conn.row_factory = aiosqlite.Row
+    # Настройки SQLite для конкурентного чтения/записи архива.
+    # WAL уже используется проектом; busy_timeout уменьшает случайные
+    # "database is locked" при одновременных фоновых операциях.
+    await _conn.execute("PRAGMA busy_timeout=5000")
+    await _conn.execute("PRAGMA synchronous=NORMAL")
+    await _conn.execute("PRAGMA cache_size=-16000")
     await _conn.executescript("""
     PRAGMA journal_mode=WAL;
     PRAGMA foreign_keys=ON;
@@ -134,6 +140,9 @@ async def init_db():
     CREATE INDEX IF NOT EXISTS idx_messages_username ON messages(username);
     CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_saved_owner ON saved_messages(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_owner_created ON messages(owner_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_owner_sender ON messages(owner_id, sender_id);
+    CREATE INDEX IF NOT EXISTS idx_saved_owner_expires ON saved_messages(owner_id, expires_at);
 
     CREATE TABLE IF NOT EXISTS bot_chats (
         id          INTEGER PRIMARY KEY,

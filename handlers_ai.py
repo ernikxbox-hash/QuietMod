@@ -26,18 +26,21 @@ THINKING_FRAMES = ["◜ 👁️ Думаю", "◝ 👁️ Думаю", "◞ 👁
 THINKING_INTERVAL = 0.8  # реже дёргаем editMessageText, пока ИИ думает
 
 async def _spin_thinking(chat_id: int, message_id: int):
-    i = 0
+    """Редко обновляет индикатор и гарантированно завершается без утечки задачи."""
+    i = 1  # первый кадр уже отправлен до запуска задачи
     try:
         while True:
+            await asyncio.sleep(THINKING_INTERVAL)
             frame = THINKING_FRAMES[i % len(THINKING_FRAMES)]
             try:
                 await bot.edit_message_text(frame, chat_id=chat_id, message_id=message_id)
             except Exception:
+                # Сообщение могли удалить или изменить — основная AI-задача
+                # при этом должна продолжить работу.
                 pass
             i += 1
-            await asyncio.sleep(THINKING_INTERVAL)
     except asyncio.CancelledError:
-        pass
+        raise
 
 @dp.message(S.ai_chat)
 async def ai_msg(msg: Message, state: FSMContext):
@@ -52,7 +55,14 @@ async def ai_msg(msg: Message, state: FSMContext):
         reply, files = await groq_chat(uid, text_content)
     finally:
         spin_task.cancel()
-    await thinking.delete()
+        try:
+            await spin_task
+        except asyncio.CancelledError:
+            pass
+    try:
+        await thinking.delete()
+    except Exception:
+        pass
     await _reply_ai_html(msg, prefix="◆ ", answer=reply, reply_markup=kb_ai())
     if files:
         await _send_code_files(uid, files)
@@ -60,6 +70,11 @@ async def ai_msg(msg: Message, state: FSMContext):
 @dp.callback_query(F.data == "ai_clear")
 async def cb_ai_clear(call: CallbackQuery):
     ai_history.pop(call.from_user.id, None)
+    try:
+        from functions import _AI_HISTORY_LAST_USE
+        _AI_HISTORY_LAST_USE.pop(call.from_user.id, None)
+    except Exception:
+        pass
     await call.answer("✕ Диалог сброшен", show_alert=True)
 
 @dp.callback_query(F.data == "ai_exit")
