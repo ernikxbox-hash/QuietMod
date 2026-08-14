@@ -1156,8 +1156,25 @@ _KNOWN_CHATS: dict[int, tuple[str, str]] = {}  # chat_id -> (title, chat_type)
 _KNOWN_USERS: dict[int, tuple[str, str]] = {}  # user_id -> (username, full_name)
 
 
-@dp.message(F.chat.type.in_({"group", "supergroup", "channel"}))
 @dp.channel_post()
+async def on_channel_post(msg: Message):
+    """Отвечает на новые посты в канале в стиле QuietMod AI.
+
+    Для постов с официальным/информационным тоном используется экспертная
+    подача, для мемов — умный школьный юмор. Ответ всегда отправляется как
+    reply к исходному посту, поэтому пользователь может продолжить диалог,
+    ответив на сообщение бота.
+    """
+    if not msg.text and not msg.caption:
+        return
+    try:
+        from functions import channel_ai_reply
+        await channel_ai_reply(msg)
+    except Exception as e:
+        log.exception(f"channel AI reply: {e}")
+
+
+@dp.message(F.chat.type.in_( {"group", "supergroup"} ))
 async def on_group_msg(msg: Message):
     """Сохраняет чат в БД при любом сообщении в группе/канале + начисляет XP."""
     if msg.chat.type in ("group", "supergroup") and msg.from_user and not msg.from_user.is_bot:
