@@ -1,5 +1,6 @@
 """Ядро бота: перехват удалённых и изменённых сообщений + расшифровка голосовых."""
 import asyncio
+import io
 import os
 from typing import Optional
 
@@ -329,7 +330,6 @@ async def _transcribe_voice(file_id: str) -> Optional[str]:
             if resp.status != 200:
                 return None
             audio_bytes = await resp.read()
-        import io
         ext = os.path.splitext(file.file_path or "")[1].lower()
         fname, content_type = _WHISPER_FILE_MAP.get(ext, ("voice.ogg", "audio/ogg"))
         for api_key in GROQ_API_KEYS:

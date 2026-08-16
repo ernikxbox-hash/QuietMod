@@ -1,6 +1,6 @@
 import asyncio
 from typing import Optional
-import aiohttp
+
 import database as db
 from core import BOT_TOKEN, HTTP_SHORT_TIMEOUT, bot, get_http, log
 

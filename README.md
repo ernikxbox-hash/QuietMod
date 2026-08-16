@@ -43,6 +43,7 @@ Telegram Business бот — перехватывает удалённые и и
 | 🖼 `.ramka` | Пришли фото — бот наденет золотую рамку (или сразу ответь на фото и напиши `.ramka`) |
 | 🏷 `.stik` | Пришли фото — бот сделает стикер (или сразу ответь на фото и напиши `.stik`) |
 | 🎥 `.krom` | Пришли видео — бот сделает кружок (или сразу ответь на видео и напиши `.krom`) |
+| 💾 `.backup` | Скачать файл базы `bot.db` (консистентный снапшот, бот не останавливается) — только для администратора, кнопка «Бэкап БД» в админке тоже работает |
 
 ### В бизнес-чатах (инлайн-команды, пишутся прямо в чате)
 
@@ -72,23 +73,36 @@ Telegram Business бот — перехватывает удалённые и и
 
 ```
 bot.py               # точка входа: init БД, синк чатов, запуск polling, graceful shutdown
-core.py              # конфигурация: env-переменные, bot/dp, логгер, FSM-состояния
-database.py          # слой данных (aiosqlite + SQLite): 7 таблиц, батчеры записи, лимиты архива
-business_api.py      # HTTP-обёртки Business-методов Telegram Bot API + кэш владельца connection
-functions.py         # общая логика: ИИ (Groq + ротация ключей), поиск, погода, WBL-фильтр, клавиатуры
+core.py              # конфигурация: env-переменные, bot/dp, логгер, FSM-состояния, HTTP-пул
+database.py          # слой данных (aiosqlite): 16 таблиц, батчеры записи, архив без лимитов
+business_api.py      # HTTP-обёртки Business-методов + кэш владельца + отметки правок бота
+functions.py         # общая логика: ИИ (Groq + ротация ключей), поиск, погода, курсы, WBL, клавиатуры
 handlers.py          # регистратор хендлеров: порядок импортов = приоритет в aiogram
-handlers_gate.py     # 🛡 гейт подписки: проверка getChatMember + middleware (ЛС и автоматизация)
+handlers_gate.py     # 🛡 гейт подписки: getChatMember + middleware (ЛС и автоматизация)
 handlers_start.py    # /start, /admin, business_connection (предзагрузка владельца)
-handlers_commands.py # инлайн-команды: .spam .mute .nomute .afk .code .wbl .ai .price .curs + форматирование
+handlers_commands.py # .spam .mute .nomute .afk .code .wbl .black .ai .price .info .curs + форматирование
 handlers_games.py    # ⚔️ Камень·Ножницы·Бумага (.knb)
-handlers_ramka.py    # 🖼 .ramka — золотая рамка на фото
+handlers_level.py    # ⬆ .level — XP и уровни за активность в чатах
+handlers_who.py      # 🎯 .who — «Кто вероятнее»: рандомный участник чата
+handlers_sled.py     # 🛰 .sled — слежка за изменениями профиля + фоновый опрос
+handlers_fdox.py     # 🎭 .fdox — шуточная карточка с вымышленными данными
+handlers_ramka.py    # 🖼 .ramka — золотая рамка на фото (Pillow или PNG по RAMKA_URL)
 handlers_stik.py     # 🏷 .stik — фото → стикер
 handlers_krom.py     # 🎥 .krom — видео → кружок
+handlers_gif.py      # 🎞 .gif — видео → гифка
+handlers_audio.py    # 🎵 .audio — видео → mp3
+handlers_voice.py    # 🎙 .voice — текст → голосовое (edge-tts)
+handlers_wm.py       # 🏷 .wm — водяной знак на фото
+handlers_shrift.py   # ✨ .шрифт — стили текста (капс, готика, хак…)
 handlers_intercept.py# ядро: перехват удалённых/изменённых сообщений + расшифровка голосовых
-handlers_ai.py       # ИИ-консьерж в ЛС и поиск по архиву
+handlers_ai.py       # ИИ-консьерж в ЛС (.ai) и поиск по архиву
+handlers_archive.py  # 📊 .stats и 🔍 .find — аналитика и ИИ-поиск по архиву
+handlers_recap.py    # 🧠 .recap — ИИ-рекап переписки из архива
 handlers_menu.py     # ЛС-меню: сохранённые, howto, приглашения, профиль, архив, донаты
-handlers_admin.py    # админ-панель, .cmd список функций, рассылки, группы/каналы
-tasks.py             # фоновая очистка просроченных сохранённых сообщений (каждые 6 ч)
+handlers_admin.py    # админка, .cmd/.status, рассылки, группы/каналы, ИИ-комментарии
+handlers_unknown.py  # ◇ неизвестные команды → подсказка .cmd
+handlers_errors.py   # 🛡 глобальный обработчик ошибок (репорт админу)
+tasks.py             # фоновая очистка архива + сверка подписок (каждые 6 ч)
 mtproto_resolver.py  # (опция) MTProto-слой: резолв юзернеймов для .sled/.info
 requirements.txt
 Procfile             # Railway / Heroku

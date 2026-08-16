@@ -686,7 +686,7 @@ async def get_recent_catches(limit: int = 10) -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 async def save_intercepted(owner_id: int, data: dict) -> int:
     now = datetime.now()
-    expires = now + __import__('datetime').timedelta(days=7)
+    expires = now + timedelta(days=7)
     conn = _get_conn()
     async with _write_lock:
         cur = await conn.execute("""

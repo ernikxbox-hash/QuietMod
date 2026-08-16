@@ -6,8 +6,19 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 import database as db
-from core import S, bot, dp, log
-from functions import LINE, _reply_ai_html, _send_code_files, ai_history, groq_chat, home_text, kb_ai, kb_back, kb_main
+from core import S, bot, dp
+from functions import (
+    LINE,
+    _AI_HISTORY_LAST_USE,
+    _reply_ai_html,
+    _send_code_files,
+    ai_history,
+    groq_chat,
+    home_text,
+    kb_ai,
+    kb_back,
+    kb_main,
+)
 
 
 @dp.callback_query(F.data == "ai_open")
@@ -70,11 +81,7 @@ async def ai_msg(msg: Message, state: FSMContext):
 @dp.callback_query(F.data == "ai_clear")
 async def cb_ai_clear(call: CallbackQuery):
     ai_history.pop(call.from_user.id, None)
-    try:
-        from functions import _AI_HISTORY_LAST_USE
-        _AI_HISTORY_LAST_USE.pop(call.from_user.id, None)
-    except Exception:
-        pass
+    _AI_HISTORY_LAST_USE.pop(call.from_user.id, None)
     await call.answer("✕ Диалог сброшен", show_alert=True)
 
 @dp.callback_query(F.data == "ai_exit")

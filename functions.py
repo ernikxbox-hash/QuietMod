@@ -1,5 +1,7 @@
 import asyncio
+import json
 import re
+import xml.etree.ElementTree as ET
 from datetime import date, timedelta, timezone
 from typing import Optional
 import aiohttp
@@ -820,6 +822,8 @@ def kb_admin() -> InlineKeyboardMarkup:
          InlineKeyboardButton(text="▤ Группы",      callback_data="adm_broadcast_groups")],
         [InlineKeyboardButton(text="◆ Гейт",        callback_data="adm_gate"),
          InlineKeyboardButton(text="◆ Ключи",       callback_data="adm_keys")],
+        [InlineKeyboardButton(text="💾 Бэкап БД",    callback_data="adm_backup"),
+         InlineKeyboardButton(text="◆ Статус",      callback_data="admin_status")],
         [InlineKeyboardButton(text="← В меню",      callback_data="back_menu")],
     ])
 SYSTEM_PROMPT = (
@@ -1266,7 +1270,6 @@ async def _fetch_cbr_rates() -> Optional[tuple[str, dict[str, float]]]:
                 log.warning(f"CBR status: {resp.status}")
                 return None
             xml_text = await resp.text()
-        import xml.etree.ElementTree as ET
         root = ET.fromstring(xml_text)
         date_str = root.get("Date") or date.today().strftime("%d.%m.%Y")
         needed = {c for c, _, _ in _POPULAR_CURS}
@@ -1584,10 +1587,9 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
                 json=payload,
                 timeout=_GROQ_TIMEOUT,
             ) as resp:
-                import json as _json
                 raw = await resp.text()
                 try:
-                    data = _json.loads(raw)
+                    data = json.loads(raw)
                 except Exception:
                     log.error(
                         f"Groq non-JSON response (key={idx + 1}/{n}, model={model}, "
@@ -1599,7 +1601,7 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
                     err = data.get("error") if isinstance(data, dict) else data
                     log.warning(
                         f"Groq key {idx + 1}/{n} failed (model={model}, status={resp.status}): "
-                        f"{_json.dumps(err, ensure_ascii=False)[:200]}"
+                        f"{json.dumps(err, ensure_ascii=False)[:200]}"
                     )
                     await db.record_stat(f"groq_key{idx + 1}_fail", f"status={resp.status}")
                     if resp.status == 413:
@@ -1608,7 +1610,7 @@ async def _groq_request(messages: list, max_tokens: int = 2048, temperature: flo
                 if "choices" not in data:
                     log.error(
                         f"Groq unexpected response (key={idx + 1}/{n}, model={model}, "
-                        f"status={resp.status}, body={_json.dumps(data, ensure_ascii=False)[:300]})"
+                        f"status={resp.status}, body={json.dumps(data, ensure_ascii=False)[:300]})"
                     )
                     continue
                 _GROQ_KEY_INDEX = idx

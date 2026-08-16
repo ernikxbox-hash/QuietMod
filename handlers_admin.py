@@ -2,6 +2,8 @@
 import asyncio
 import os
 import shutil
+import sqlite3
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -10,6 +12,7 @@ import aiohttp
 from aiogram import F
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
+    BufferedInputFile,
     CallbackQuery,
     ChatMemberUpdated,
     InlineKeyboardButton,
@@ -73,6 +76,85 @@ async def cb_adm(call: CallbackQuery, state: FSMContext):
         "◇ Выбери раздел:",
         reply_markup=kb_admin(),
     )
+
+
+# ── 💾 Бэкап базы (только админ): скачать bot.db из админки ──────────
+async def _db_snapshot_bytes() -> Optional[bytes]:
+    """Консистентный снапшот SQLite-базы (online backup — безопасно при живом боте).
+
+    Открываем базу отдельным соединением и через sqlite3.Connection.backup
+    копируем её в temp-файл: WAL-данные попадают в снапшот целиком — никаких
+    «битых» копий, качать можно не останавливая бота.
+    """
+    def _snap() -> bytes:
+        src = sqlite3.connect(db.DB_PATH)
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                tmp = os.path.join(td, "bot.db")
+                dst = sqlite3.connect(tmp)
+                try:
+                    with dst:
+                        src.backup(dst)
+                finally:
+                    dst.close()
+                with open(tmp, "rb") as f:
+                    return f.read()
+        finally:
+            src.close()
+    try:
+        return await asyncio.to_thread(_snap)
+    except Exception as e:
+        log.error(f"💾 backup snapshot: {e}")
+        return None
+
+
+async def _send_db_backup(chat_id: int) -> bool:
+    """Снапшот базы → файлом в чат. False при ошибке или невместимости."""
+    data = await _db_snapshot_bytes()
+    if data is None:
+        return False
+    size_mb = len(data) / 1024 / 1024
+    if size_mb > 45:
+        try:
+            await bot.send_message(
+                chat_id,
+                f"◇ База слишком большая для Telegram: {size_mb:.1f} МБ (лимит ~50 МБ).",
+            )
+        except Exception:
+            pass
+        return False
+    fname = f"quietmod-backup-{datetime.now():%Y%m%d-%H%M}.db"
+    await bot.send_document(chat_id, BufferedInputFile(data, filename=fname))
+    return True
+
+
+@dp.message(F.text.regexp(r"(?i)^\.(backup|dump)$"), F.chat.type == "private")
+async def on_backup_cmd(msg: Message):
+    """💾 .backup — скачать копию базы (только администратор)."""
+    if not msg.from_user or msg.from_user.id != ADMIN_ID:
+        return
+    status = await msg.answer("◆ · · ·")
+    ok = await _send_db_backup(msg.chat.id)
+    try:
+        await status.delete()
+    except Exception:
+        pass
+    if not ok:
+        await msg.answer("◇ Не получилось сделать бэкап — попробуй ещё раз.")
+
+
+@dp.callback_query(F.data == "adm_backup")
+async def cb_adm_backup(call: CallbackQuery):
+    """💾 Кнопка «Бэкап БД» в админке — скачать базу."""
+    if not _is_admin(call):
+        return
+    await call.answer("◆ Делаю снапшот…", show_alert=False)
+    ok = await _send_db_backup(call.message.chat.id)
+    if not ok:
+        try:
+            await call.message.answer("◇ Не получилось сделать бэкап — попробуй ещё раз.")
+        except Exception:
+            pass
 
 
 # ── 📊 Дашборд: главные цифры + тренд запусков за 7 дней ──────────────
